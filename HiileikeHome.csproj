@@ -9,6 +9,7 @@
 
   <ItemGroup>
     <None Include=".github\workflows\deploy.yml" />
+    <None Include="wwwroot\images\book.png" />
     <None Include="wwwroot\images\cloud.png" />
     <None Include="wwwroot\images\film.png" />
     <None Include="wwwroot\images\play.png" />

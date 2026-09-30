@@ -6,7 +6,7 @@ on:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: ddwalters/cyprianhub
+  IMAGE_NAME: ddwalters/hiileike-home
 
 jobs:
   build-and-push-image:
