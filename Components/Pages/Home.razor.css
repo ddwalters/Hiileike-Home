@@ -222,10 +222,6 @@
     gap: 8px;
 }
 
-.local .lan-badge {
-    display: none;
-}
-
 .meta {
     display: none;
     font-size: 0.75rem;
@@ -262,8 +258,7 @@
         font-size: 0.875rem;
     }
 
-    .meta,
-    .local .lan-badge {
+    .meta {
         display: inline;
     }
 }
