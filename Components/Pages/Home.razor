@@ -1,22 +1,116 @@
-﻿@page "/"
+@page "/"
+@using Microsoft.AspNetCore.Components.Authorization
 
-<PageTitle>Home</PageTitle>
+<PageTitle>Hiileike</PageTitle>
 
-<div class="vert-container">
+<AuthorizeView>
+    <Authorized>
+        <div class="stage">
 
-<h1 class="header">Hiileike</h1>
+            <div class="session">
+                <form method="post" action="/logout">
+                    <button type="submit" class="signout">Sign out</button>
+                </form>
+            </div>
 
-<div class="buttons-container">
-        <a href="https://storage.hiileike.com/apps/files/files" class="btn btn-gradient" target="_blank">
-        <img src="/images/cloud.png" alt="Cloud">
-    </a>
+            <header class="brand">
+                <h1>Hiileike</h1>
+            </header>
 
-    <a href="https://stream.hiileike.com/web/#/home" class="btn btn-gradient" target="_blank">
-        <img src="/images/film.png" alt="Jellyfin Steaming">
-    </a>
+            <nav class="apps" aria-label="Apps">
+                @foreach (var app in Apps)
+                {
+                    <div class="app">
+                        <a class="tile" href="@app.Url" target="_blank" rel="noopener noreferrer">
+                            <span class="chip"><img src="@app.Icon" alt="" /></span>
+                            <span class="label">@app.Label</span>
+                        </a>
 
-    <a href="https://read.hiileike.com/home" class="btn btn-gradient" target="_blank">
-        <img src="/images/book.png" alt="Books">
-    </a>
-</div>
-</div>
+                        @if (app.Local is { Length: > 0 })
+                        {
+                            <div class="local" role="group" aria-label="@app.Label, local network only">
+                                <ul>
+                                    @foreach (var link in app.Local)
+                                    {
+                                        <li>
+                                            <a class="pill" href="@link.Url" target="_blank" rel="noopener noreferrer">
+                                                <span>@link.Label</span>
+                                                <span class="tail">
+                                                    @if (link.Meta is not null)
+                                                    {
+                                                        <span class="meta">@link.Meta</span>
+                                                    }
+                                                    <span class="lan-badge" title="Only reachable on the local network">LAN</span>
+                                                </span>
+                                            </a>
+                                        </li>
+                                    }
+                                </ul>
+                            </div>
+                        }
+                    </div>
+                }
+            </nav>
+
+            <footer class="dock">
+                <span class="dock-title">Homelab</span>
+                <nav class="dock-links" aria-label="Homelab admin">
+                    @foreach (var tool in Tools)
+                    {
+                        <a class="pill pill-tool" href="@tool.Url" target="_blank" rel="noopener noreferrer">
+                            <span>@tool.Label</span>
+                            @if (tool.LanOnly)
+                            {
+                                <span class="lan-badge" title="Only reachable on the local network">LAN</span>
+                            }
+                        </a>
+                    }
+                </nav>
+            </footer>
+
+        </div>
+    </Authorized>
+    <NotAuthorized>
+        <div class="stage">
+            <div class="session">
+                <a class="signout" href="/login" data-enhance-nav="false">Log in</a>
+            </div>
+
+            <header class="brand brand-solo">
+                <h1>Hiileike</h1>
+            </header>
+        </div>
+    </NotAuthorized>
+</AuthorizeView>
+
+@code {
+    private record LocalLink(string Label, string Url, string? Meta = null);
+
+    private record AppTile(string Label, string Icon, string Url, LocalLink[]? Local = null);
+
+    private record Tool(string Label, string Url, bool LanOnly = false);
+
+    private static readonly AppTile[] Apps =
+    [
+        new("Cloud", "/images/cloud.png", "https://storage.hiileike.com/apps/files/files"),
+
+        new("Stream", "/images/film.png", "https://stream.hiileike.com/web/#/home",
+        [
+            new("Movies", "http://192.168.1.9:7878/", "Radarr"),
+            new("Anime", "http://192.168.1.9:8990/", "Sonarr"),
+            new("Shows", "http://192.168.1.9:8989/", "Sonarr"),
+        ]),
+
+        new("Books", "/images/book.png", "https://read.hiileike.com/home",
+        [
+            new("Suwayomi", "http://192.168.1.9:4567/library"),
+        ]),
+    ];
+
+    private static readonly Tool[] Tools =
+    [
+        new("NPM", "http://192.168.1.9:81/", LanOnly: true),
+        new("Cloudflare", "https://dash.cloudflare.com/d9ad2ec854126261175329671cf2df27/tunnels/f0e582bc-fdb1-42a8-b686-2ca2a4a8aa2e/overview"),
+        new("Authentik", "https://auth.hiileike.com/if/user/#/library"),
+    ];
+}
