@@ -23,7 +23,11 @@ if (builder.Configuration["DataProtection:KeysPath"] is { Length: > 0 } keysPath
 
 var authentication = builder.Services
     .AddAuthentication(CookieAuthenticationDefaults.AuthenticationScheme)
-    .AddCookie();
+    .AddCookie(options =>
+    {
+        options.ExpireTimeSpan = TimeSpan.FromDays(30);
+        options.SlidingExpiration = false;
+    });
 
 if (authentikConfigured)
 {
@@ -69,7 +73,7 @@ app.UseAntiforgery();
 app.MapStaticAssets();
 
 app.MapGet("/login", () => authentikConfigured
-    ? Results.Challenge(new AuthenticationProperties { RedirectUri = "/" }, [OpenIdConnectDefaults.AuthenticationScheme])
+    ? Results.Challenge(new AuthenticationProperties { RedirectUri = "/", IsPersistent = true }, [OpenIdConnectDefaults.AuthenticationScheme])
     : Results.Text("Sign-in isn't set up.", statusCode: StatusCodes.Status503ServiceUnavailable));
 
 app.MapPost("/logout", async (HttpContext context) =>
