@@ -1,0 +1,304 @@
+@inject LoreStore Store
+@inject IJSRuntime JS
+@inject ILogger<EntryEditor> Logger
+
+<NavigationLock ConfirmExternalNavigation="@Dirty" OnBeforeInternalNavigation="BeforeNavigation" />
+
+<form class="editor" @onsubmit="Save" @onsubmit:preventDefault>
+    <div class="page-title">
+        <div>
+            <p class="eyebrow">WORLD CODEX</p>
+            <h1>@(Entry.Revision == 0 ? "New entry" : "Edit entry")</h1>
+            <p class="muted">Capture the idea, its connections, and how it works in your game.</p>
+        </div>
+        <div class="actions">
+            <button type="button" class="button" @onclick="Cancel" disabled="@reading">Cancel</button>
+            <button type="submit" class="button primary" disabled="@reading"><LoreIcon Name="check" Size="18" /> Save entry</button>
+        </div>
+    </div>
+    @if (error is not null)
+    {
+        <p class="notice error" role="alert">@error</p>
+    }
+    <div class="detail-grid">
+        <div class="stack">
+            <section class="panel edit-section">
+                <div class="field-grid">
+                    <label>Type
+                        <select @bind="Kind">
+                            @foreach (var kind in Enum.GetValues<EntryKind>())
+                            {
+                                <option value="@kind">@kind</option>
+                            }
+                        </select>
+                    </label>
+                    <label>Implementation status
+                        <select @bind="Status">
+                            @foreach (var status in Enum.GetValues<EntryStatus>())
+                            {
+                                <option value="@status">@status.Label()</option>
+                            }
+                        </select>
+                    </label>
+                </div>
+                <label>Title
+                    <input @bind="Title" @bind:event="oninput" required maxlength="120" placeholder="Name this entry" />
+                </label>
+                <label>Summary
+                    <textarea @bind="Summary" @bind:event="oninput" rows="2" maxlength="320" placeholder="A short description for the codex"></textarea>
+                </label>
+            </section>
+            <div class="panel">
+                <NoteEditor Id="lore-notes" Title="Lore & ideas" Placeholder="What should you remember about this entry?" @bind-Value="Notes" />
+                <NoteEditor Id="implementation-notes" Title="Implementation notes" Placeholder="How does it work in-game? What’s left to build?" @bind-Value="Implementation" />
+            </div>
+        </div>
+        <div class="stack">
+            <section class="panel edit-section">
+                <h2>Organization</h2>
+                <label>Tags
+                    <input @bind="tags" @bind:event="oninput" maxlength="500" placeholder="Coast, Act I, Exploration" />
+                </label>
+                <small class="muted">Separate tags with commas.</small>
+                <label class="checkbox"><input type="checkbox" @bind="Pinned" /> Pin to the top of the codex</label>
+            </section>
+            <section class="panel edit-section">
+                <h2><LoreIcon Name="link" /> Linked entries</h2>
+                <small class="muted">Links appear on both entries.</small>
+                @if (Candidates.Count == 0)
+                {
+                    <p class="muted">Create another entry to link it here.</p>
+                }
+                else
+                {
+                    <label class="visually-hidden" for="link-search">Find entries to link</label>
+                    <input id="link-search" type="search" @bind="linkSearch" @bind:event="oninput" placeholder="Find entries to link…" />
+                    <div class="link-options">
+                        @foreach (var entry in FilteredCandidates)
+                        {
+                            <label class="checkbox link-option" @key="entry.Id">
+                                <input type="checkbox" checked="@draft.Links.Contains(entry.Id)" @onchange="() => ToggleLink(entry.Id)" />
+                                <span>@entry.Title <small>@entry.Kind</small></span>
+                            </label>
+                        }
+                        @if (!FilteredCandidates.Any())
+                        {
+                            <p class="muted">No matching entries.</p>
+                        }
+                    </div>
+                }
+            </section>
+            <section class="panel edit-section">
+                <h2><LoreIcon Name="image" /> Pictures <small>@(draft.Pictures.Length + uploads.Count)/@LoreStore.PictureLimit</small></h2>
+                <label class="file-picker">
+                    <span>Add pictures</span>
+                    <InputFile OnChange="AddPictures" multiple accept="image/png,image/jpeg,image/webp,image/gif" disabled="@(reading || draft.Pictures.Length + uploads.Count >= LoreStore.PictureLimit)" />
+                </label>
+                <small class="muted">PNG, JPEG, WebP or GIF. Up to 8 MB each. The first picture is the card cover.</small>
+                @if (pictureError is not null)
+                {
+                    <p class="notice error" role="alert">@pictureError</p>
+                }
+                @if (reading)
+                {
+                    <p class="muted" role="status">Reading pictures…</p>
+                }
+                @foreach (var picture in draft.Pictures)
+                {
+                    <div class="picture-edit" @key="picture.Id">
+                        <img src="@($"/lore/pictures/{picture.Id}")" alt="" />
+                        <span title="@picture.Name">@picture.Name</span>
+                        @if (picture != draft.Pictures[0])
+                        {
+                            <button type="button" class="button small" @onclick="() => SetCover(picture)">Cover</button>
+                        }
+                        <button type="button" class="icon-button" aria-label="@($"Remove {picture.Name}")" @onclick="() => RemovePicture(picture)">
+                            <LoreIcon Name="close" Size="16" />
+                        </button>
+                    </div>
+                }
+                @foreach (var upload in uploads)
+                {
+                    <div class="picture-edit" @key="upload.Picture.Id">
+                        <LoreIcon Name="image" Size="18" />
+                        <span title="@upload.Picture.Name">@upload.Picture.Name <small>Pending</small></span>
+                        <button type="button" class="icon-button" aria-label="@($"Remove {upload.Picture.Name}")" @onclick="() => uploads.Remove(upload)">
+                            <LoreIcon Name="close" Size="16" />
+                        </button>
+                    </div>
+                }
+            </section>
+        </div>
+    </div>
+</form>
+
+@code {
+    [Parameter, EditorRequired] public LoreEntry Entry { get; set; } = default!;
+    [Parameter, EditorRequired] public IReadOnlyList<LoreEntry> Candidates { get; set; } = [];
+    [Parameter] public EventCallback<LoreEntry> Saved { get; set; }
+    [Parameter] public EventCallback Cancelled { get; set; }
+
+    private LoreEntry draft = default!;
+    private readonly List<PictureUpload> uploads = [];
+    private string tags = "";
+    private string originalTags = "";
+    private string linkSearch = "";
+    private string? error;
+    private string? pictureError;
+    private bool reading;
+    private bool finished;
+
+    private bool Dirty => !finished && (draft != Entry || tags != originalTags || uploads.Count > 0 || reading);
+    private string Title { get => draft.Title; set => draft = draft with { Title = value }; }
+    private string Summary { get => draft.Summary; set => draft = draft with { Summary = value }; }
+    private string Notes { get => draft.Notes; set => draft = draft with { Notes = value }; }
+    private string Implementation { get => draft.Implementation; set => draft = draft with { Implementation = value }; }
+    private EntryKind Kind { get => draft.Kind; set => draft = draft with { Kind = value }; }
+    private EntryStatus Status { get => draft.Status; set => draft = draft with { Status = value }; }
+    private bool Pinned { get => draft.Pinned; set => draft = draft with { Pinned = value }; }
+
+    private IEnumerable<LoreEntry> FilteredCandidates => Candidates
+        .Where(entry => entry.Title.Contains(linkSearch.Trim(), StringComparison.OrdinalIgnoreCase)
+            || entry.Kind.ToString().Contains(linkSearch.Trim(), StringComparison.OrdinalIgnoreCase))
+        .OrderByDescending(entry => draft.Links.Contains(entry.Id))
+        .ThenBy(entry => entry.Title, StringComparer.OrdinalIgnoreCase);
+
+    protected override void OnInitialized()
+    {
+        draft = Entry;
+        tags = originalTags = string.Join(", ", Entry.Tags);
+    }
+
+    private void ToggleLink(Guid id) => draft = draft with
+    {
+        Links = draft.Links.Contains(id) ? draft.Links.Where(link => link != id).ToArray() : [.. draft.Links, id]
+    };
+
+    private void SetCover(Picture picture) => draft = draft with
+    {
+        Pictures = [picture, .. draft.Pictures.Where(other => other != picture)]
+    };
+
+    private void RemovePicture(Picture picture) => draft = draft with
+    {
+        Pictures = draft.Pictures.Where(other => other != picture).ToArray()
+    };
+
+    private async Task AddPictures(InputFileChangeEventArgs args)
+    {
+        pictureError = null;
+        var remaining = LoreStore.PictureLimit - draft.Pictures.Length - uploads.Count;
+        if (args.FileCount > remaining)
+        {
+            pictureError = $"You can add {remaining} more pictures to this entry.";
+            return;
+        }
+
+        reading = true;
+        var problems = new List<string>();
+        try
+        {
+            foreach (var file in args.GetMultipleFiles(remaining))
+            {
+                if (file.Size is < 12 or > LoreStore.PictureSize)
+                {
+                    problems.Add($"{file.Name} is empty, incomplete, or larger than 8 MB.");
+                    continue;
+                }
+
+                if (uploads.Sum(upload => (long)upload.Bytes.Length) + file.Size > LoreStore.PendingPictureBytes)
+                {
+                    problems.Add("Save the current batch before adding more than 48 MB of pictures.");
+                    break;
+                }
+
+                try
+                {
+                    await using var stream = file.OpenReadStream(LoreStore.PictureSize);
+                    using var buffer = new MemoryStream((int)file.Size);
+                    await stream.CopyToAsync(buffer);
+                    var bytes = buffer.ToArray();
+                    var contentType = PictureFormat(bytes);
+                    if (contentType is null)
+                    {
+                        problems.Add($"{file.Name} is not a supported picture.");
+                        continue;
+                    }
+
+                    uploads.Add(new(new Picture(Guid.NewGuid(), Path.GetFileName(file.Name), contentType), bytes));
+                }
+                catch (Exception ex) when (ex is IOException or InvalidOperationException or JSException)
+                {
+                    Logger.LogWarning(ex, "A picture could not be read.");
+                    problems.Add($"Could not read {file.Name}. Try selecting it again.");
+                }
+            }
+        }
+        finally
+        {
+            pictureError = problems.Count == 0 ? null : string.Join(" ", problems);
+            reading = false;
+        }
+    }
+
+    private static string? PictureFormat(ReadOnlySpan<byte> bytes)
+    {
+        if (bytes.Length < 12)
+            return null;
+        if (bytes.StartsWith(new byte[] { 137, 80, 78, 71, 13, 10, 26, 10 }))
+            return "image/png";
+        if (bytes.StartsWith(new byte[] { 255, 216, 255 }))
+            return "image/jpeg";
+        if (bytes.StartsWith("GIF87a"u8) || bytes.StartsWith("GIF89a"u8))
+            return "image/gif";
+        if (bytes.StartsWith("RIFF"u8) && bytes[8..].StartsWith("WEBP"u8))
+            return "image/webp";
+        return null;
+    }
+
+    private async Task Save()
+    {
+        if (reading || finished)
+            return;
+
+        error = null;
+        LoreEntry saved;
+        try
+        {
+            var normalizedTags = tags.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)
+                .Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+            saved = Store.Save(draft with { Tags = normalizedTags, Summary = draft.Summary.Trim() }, uploads);
+        }
+        catch (InvalidOperationException ex)
+        {
+            error = ex.Message;
+            return;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            Logger.LogError(ex, "Could not save lore entry {EntryId}.", draft.Id);
+            error = "The entry could not be written to disk. Your edits are still here.";
+            return;
+        }
+
+        finished = true;
+        await Saved.InvokeAsync(saved);
+    }
+
+    private async Task Cancel()
+    {
+        if (Dirty && !await ConfirmDiscard())
+            return;
+
+        finished = true;
+        await Cancelled.InvokeAsync();
+    }
+
+    private async Task BeforeNavigation(LocationChangingContext context)
+    {
+        if (Dirty && !await ConfirmDiscard())
+            context.PreventNavigation();
+    }
+
+    private ValueTask<bool> ConfirmDiscard() => JS.InvokeAsync<bool>("confirm", "Discard unsaved changes to this entry?");
+}

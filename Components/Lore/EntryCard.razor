@@ -1,0 +1,47 @@
+<a class="entry-card @Entry.Kind" href="@($"/lore/entry/{Entry.Id}{KindQuery}")">
+    @if (Entry.Pictures.FirstOrDefault() is { } cover)
+    {
+        <img class="card-cover" src="@($"/lore/pictures/{cover.Id}")" alt="" loading="lazy" />
+    }
+    <div class="card-content">
+        <div class="card-top">
+            <span class="kind-chip"><LoreIcon Name="@Entry.Kind.ToString()" Size="17" /></span>
+            <span class="kind-label">@Entry.Kind</span>
+            @if (Entry.Pinned)
+            {
+                <span class="pin" title="Pinned"><LoreIcon Name="pin" Size="16" /></span>
+            }
+        </div>
+        <h3>@Entry.Title</h3>
+        <p class="card-summary">@(Entry.Summary.Length == 0 ? "No summary yet." : Entry.Summary)</p>
+        <div class="tags">
+            @foreach (var tag in Entry.Tags.Take(3))
+            {
+                <span class="tag">@tag</span>
+            }
+            @if (Entry.Tags.Length > 3)
+            {
+                <span class="tag">+@(Entry.Tags.Length - 3)</span>
+            }
+        </div>
+        <div class="card-foot">
+            <span class="status @Entry.Status">@Entry.Status.Label()</span>
+            <span class="card-meta">
+                @if (Entry.Links.Length > 0)
+                {
+                    <span title="Linked entries"><LoreIcon Name="link" Size="14" /> @Entry.Links.Length</span>
+                }
+                @if (Entry.Pictures.Length > 0)
+                {
+                    <span title="Pictures"><LoreIcon Name="image" Size="14" /> @Entry.Pictures.Length</span>
+                }
+                <LoreIcon Name="arrow" Size="16" />
+            </span>
+        </div>
+    </div>
+</a>
+
+@code {
+    [Parameter, EditorRequired] public LoreEntry Entry { get; set; } = default!;
+    [Parameter] public string KindQuery { get; set; } = "";
+}

@@ -1,0 +1,30 @@
+<svg width="@Size" height="@Size" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65"
+     stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+    <path d="@Path" />
+</svg>
+
+@code {
+    [Parameter, EditorRequired] public string Name { get; set; } = "";
+    [Parameter] public int Size { get; set; } = 20;
+
+    private string Path => Name switch
+    {
+        "book" => "M12 7c-3-3-7-3-10-2v13c3-1 7-1 10 2 3-3 7-3 10-2V5c-3-1-7-1-10 2v13",
+        "grid" => "M3 3h7v7H3z M14 3h7v7h-7z M3 14h7v7H3z M14 14h7v7h-7z",
+        "Item" => "m12 3 8 4.5v9L12 21l-8-4.5v-9L12 3z M4 7.5l8 5 8-5 M12 12.5V21 M8 5.3l8 4.5",
+        "Character" => "M20 21v-2a5 5 0 0 0-5-5H9a5 5 0 0 0-5 5v2 M16 7a4 4 0 1 1-8 0 4 4 0 0 1 8 0z",
+        "Quest" => "M5 21V4 M5 5c5-4 9 4 15 0v10c-6 4-10-4-15 0",
+        "Location" => "M20 10c0 5-8 11-8 11S4 15 4 10a8 8 0 1 1 16 0z M15 10a3 3 0 1 1-6 0 3 3 0 0 1 6 0z",
+        "search" => "M16 10a6 6 0 1 1-12 0 6 6 0 0 1 12 0z M15 15l5 5",
+        "plus" => "M12 5v14 M5 12h14",
+        "arrow" => "M5 12h14 M13 6l6 6-6 6",
+        "back" => "M19 12H5 M11 6l-6 6 6 6",
+        "link" => "M10 13a4 4 0 0 0 6 0l4-4a4 4 0 0 0-6-6l-2 2 M14 11a4 4 0 0 0-6 0l-4 4a4 4 0 0 0 6 6l2-2",
+        "image" => "M3 4h18v16H3z M3 17l5-5 4 4 3-3 6 6 M15 8h.01",
+        "pin" => "M9 3h6l-1 6 4 4v2H6v-2l4-4-1-6z M12 15v6",
+        "edit" => "m4 16 12-12 4 4L8 20H4z M13 7l4 4",
+        "check" => "m5 12 4 4L19 6",
+        "close" => "m6 6 12 12 M18 6 6 18",
+        _ => ""
+    };
+}

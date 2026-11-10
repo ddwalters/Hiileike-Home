@@ -1,0 +1,377 @@
+@page "/lore"
+@page "/lore/entry/{EntryId:guid}"
+@attribute [Authorize]
+@layout LoreLayout
+@inject LoreStore Store
+@inject NavigationManager Navigation
+@inject ILogger<Codex> Logger
+
+<PageTitle>@(Selected?.Title is { } title ? $"{title} · Lore Builder" : "Lore Builder · World Codex")</PageTitle>
+
+<div class="app-shell">
+    <aside class="sidebar">
+        <a class="brand" href="/lore">
+            <span class="brand-mark"><LoreIcon Name="book" Size="24" /></span>
+            <span><strong>Lore Builder</strong><small>WORLD CODEX</small></span>
+        </a>
+        <nav aria-label="Codex categories">
+            <p class="nav-caption">WORKSPACE</p>
+            <a href="/lore" class="@NavClass(null)" aria-current="@(KindFilter is null ? "page" : null)">
+                <LoreIcon Name="grid" Size="17" /><span>All entries</span><small>@entries.Length</small>
+            </a>
+            @foreach (var kind in Kinds)
+            {
+                <a href="@($"/lore?kind={kind}")" class="@NavClass(kind)" aria-current="@(KindFilter == kind ? "page" : null)">
+                    <LoreIcon Name="@kind.ToString()" Size="17" /><span>@kind.Plural()</span>
+                    <small>@entries.Count(entry => entry.Kind == kind)</small>
+                </a>
+            }
+        </nav>
+        <div class="sidebar-foot"><span></span> Private workspace</div>
+    </aside>
+
+    <div class="workspace">
+        <header class="topbar">
+            <div class="crumb"><LoreIcon Name="book" Size="16" /> <a href="/">Hiileike Home</a> <b>/</b> @(EntryId is null ? KindFilter?.Plural() ?? "All entries" : Selected?.Kind.Plural() ?? "Entry")</div>
+            @if (editing is null)
+            {
+                <button class="button primary" @onclick="NewEntry"><LoreIcon Name="plus" Size="18" /> New entry</button>
+            }
+        </header>
+        <main class="content">
+            @if (error is not null)
+            {
+                <p class="notice error" role="alert">@error</p>
+            }
+            @if (editing is not null)
+            {
+                <EntryEditor @key="editing.Id" Entry="editing" Candidates="Candidates" Saved="Saved" Cancelled="CancelEdit" />
+            }
+            else if (Selected is { } entry)
+            {
+                <a class="back-link" href="@ListUrl"><LoreIcon Name="back" Size="16" /> Back to codex</a>
+                <div class="page-title">
+                    <div>
+                        <div class="detail-type @entry.Kind">
+                            <span class="kind-chip"><LoreIcon Name="@entry.Kind.ToString()" Size="19" /></span>
+                            <span class="eyebrow">@entry.Kind</span>
+                            <span class="status @entry.Status">@entry.Status.Label()</span>
+                            @if (entry.Pinned)
+                            {
+                                <span class="pin" title="Pinned"><LoreIcon Name="pin" Size="17" /></span>
+                            }
+                        </div>
+                        <h1>@entry.Title</h1>
+                        @if (entry.Summary.Length > 0)
+                        {
+                            <p class="muted">@entry.Summary</p>
+                        }
+                    </div>
+                    <button class="button" @onclick="() => Edit(entry)"><LoreIcon Name="edit" Size="17" /> Edit entry</button>
+                </div>
+                <div class="detail-grid">
+                    <div class="stack">
+                        <section class="panel note-panel">
+                            <h2>Lore &amp; ideas</h2>
+                            <NoteText Value="@entry.Notes" />
+                        </section>
+                        <section class="panel note-panel">
+                            <h2>Implementation notes</h2>
+                            <NoteText Value="@entry.Implementation" EmptyText="No implementation notes yet." />
+                        </section>
+                        <section class="panel note-panel">
+                            <h2><LoreIcon Name="image" /> Pictures <small>@entry.Pictures.Length</small></h2>
+                            @if (entry.Pictures.Length == 0)
+                            {
+                                <p class="muted">No pictures attached.</p>
+                            }
+                            else
+                            {
+                                <div class="gallery">
+                                    @foreach (var picture in entry.Pictures)
+                                    {
+                                        var url = $"/lore/pictures/{picture.Id}";
+                                        <a href="@url" target="_blank" rel="noopener" title="Open full-size picture">
+                                            <img src="@url" alt="@picture.Name" loading="lazy" />
+                                            <span>@picture.Name</span>
+                                        </a>
+                                    }
+                                </div>
+                            }
+                        </section>
+                    </div>
+                    <div class="stack">
+                        <section class="panel note-panel">
+                            <h2><LoreIcon Name="link" /> Linked entries <small>@entry.Links.Length</small></h2>
+                            @if (entry.Links.Length == 0)
+                            {
+                                <p class="muted">No linked entries yet.</p>
+                            }
+                            @foreach (var link in entries.Where(other => entry.Links.Contains(other.Id)).OrderBy(other => other.Title))
+                            {
+                                <a class="related @link.Kind" href="@($"/lore/entry/{link.Id}{KindQuery}")">
+                                    <span class="kind-chip"><LoreIcon Name="@link.Kind.ToString()" Size="16" /></span>
+                                    <span><strong>@link.Title</strong><small>@link.Kind</small></span>
+                                    <LoreIcon Name="arrow" Size="16" />
+                                </a>
+                            }
+                        </section>
+                        <section class="panel note-panel">
+                            <h2>Entry details</h2>
+                            <div class="tags">
+                                @foreach (var tag in entry.Tags)
+                                {
+                                    <span class="tag">@tag</span>
+                                }
+                                @if (entry.Tags.Length == 0)
+                                {
+                                    <p class="muted">No tags.</p>
+                                }
+                            </div>
+                            <p class="muted updated">Updated @entry.Updated.ToLocalTime().ToString("MMM d, yyyy")</p>
+                            @if (confirmDelete)
+                            {
+                                <p class="muted">Delete this entry, its pictures, and its links?</p>
+                                <div class="actions">
+                                    <button class="button small" @onclick="() => confirmDelete = false">Cancel</button>
+                                    <button class="button small danger" @onclick="() => Delete(entry)">Delete entry</button>
+                                </div>
+                            }
+                            else
+                            {
+                                <button class="button small danger" @onclick="() => confirmDelete = true">Delete entry</button>
+                            }
+                        </section>
+                    </div>
+                </div>
+            }
+            else if (EntryId is not null)
+            {
+                <div class="panel empty">
+                    <span class="empty-icon"><LoreIcon Name="book" Size="28" /></span>
+                    <h1>Entry unavailable</h1>
+                    <p class="muted">This entry could not be found in the codex.</p>
+                    <a class="button" href="@ListUrl">Back to codex</a>
+                </div>
+            }
+            else
+            {
+                var visibleEntries = VisibleEntries;
+                <section class="hero">
+                    <div>
+                        <p class="eyebrow"><span></span> YOUR WORLD, IN PROGRESS</p>
+                        <h1>@(KindFilter?.Plural() ?? "World Codex")</h1>
+                        <p>A place for the people, places, quests, and things that make up your game.</p>
+                    </div>
+                    <div class="hero-emblem" aria-hidden="true">
+                        <svg viewBox="0 0 230 170" fill="none">
+                            <circle cx="117" cy="85" r="70" /><circle cx="117" cy="85" r="53" />
+                            <path d="M117 6v158M38 85h158M61 29l112 112M173 29 61 141" class="chart-guides" />
+                            <path d="m117 24 13 47 48 14-48 14-13 47-14-47-47-14 47-14z" />
+                            <path d="m117 24 1 61 60 0m-60 0-1 61m1-61H56" />
+                            <path d="m80 48 23 23m27 0 24-23m-24 51 24 23m-51-23-23 23" />
+                            <circle cx="117" cy="85" r="4" class="chart-center" />
+                            <path d="M30 44v12m-6-6h12m166 66v10m-5-5h10M174 14v8m-4-4h8" class="chart-stars" />
+                        </svg>
+                    </div>
+                </section>
+
+                <section class="browser" aria-labelledby="entries-heading">
+                    <div class="list-heading">
+                        <div><h2 id="entries-heading">@(KindFilter?.Plural() ?? "All entries")</h2><span class="count">@visibleEntries.Length</span></div>
+                        @if (HasFilters)
+                        {
+                            <button class="button small" @onclick="ResetFilters">Clear filters</button>
+                        }
+                    </div>
+                    <div class="filters">
+                        <div class="search">
+                            <LoreIcon Name="search" Size="19" />
+                            <input aria-label="Search entries" type="search" @bind="search" @bind:event="oninput" placeholder="Search titles, notes, and tags…" />
+                        </div>
+                        <select aria-label="Filter by implementation status" @bind="statusFilter">
+                            <option value="">All statuses</option>
+                            @foreach (var status in Enum.GetValues<EntryStatus>())
+                            {
+                                <option value="@status">@status.Label()</option>
+                            }
+                        </select>
+                        <select aria-label="Filter by tag" @bind="tagFilter">
+                            <option value="">All tags</option>
+                            @foreach (var tag in AllTags)
+                            {
+                                <option value="@tag">@tag</option>
+                            }
+                        </select>
+                        <select aria-label="Sort entries" @bind="sort">
+                            <option value="recent">Recently updated</option>
+                            <option value="title">Title A–Z</option>
+                            <option value="status">Implementation status</option>
+                        </select>
+                    </div>
+
+                    @if (visibleEntries.Length > 0)
+                    {
+                        <div class="entry-grid">
+                            @foreach (var item in visibleEntries)
+                            {
+                                <EntryCard @key="item.Id" Entry="item" KindQuery="KindQuery" />
+                            }
+                        </div>
+                    }
+                    else
+                    {
+                        <div class="panel empty">
+                            <span class="empty-icon"><LoreIcon Name="book" Size="28" /></span>
+                            <h3>@(HasFilters ? "No entries match these filters" : "Nothing here yet")</h3>
+                            <p class="muted">@(HasFilters ? "Try a different search or clear the filters." : "Add an idea and give it a place in your world.")</p>
+                            <div class="actions">
+                                @if (HasFilters)
+                                {
+                                    <button class="button" @onclick="ResetFilters">Clear filters</button>
+                                }
+                                else
+                                {
+                                    <button class="button primary" @onclick="NewEntry"><LoreIcon Name="plus" Size="18" /> Create an entry</button>
+                                    @if (entries.Length == 0)
+                                    {
+                                        <button class="button" @onclick="LoadExamples">Load sample entries</button>
+                                    }
+                                }
+                            </div>
+                        </div>
+                    }
+                </section>
+            }
+        </main>
+        <footer class="workspace-foot">Lore Builder <span>·</span> A personal game development codex</footer>
+    </div>
+</div>
+
+@code {
+    [Parameter] public Guid? EntryId { get; set; }
+    [SupplyParameterFromQuery(Name = "kind")] public string? KindQueryValue { get; set; }
+
+    private static readonly EntryKind[] Kinds = Enum.GetValues<EntryKind>();
+    private LoreEntry[] entries = [];
+    private LoreEntry? editing;
+    private string? error;
+    private string search = "";
+    private string statusFilter = "";
+    private string tagFilter = "";
+    private string sort = "recent";
+    private bool confirmDelete;
+
+    private EntryKind? KindFilter => Enum.TryParse<EntryKind>(KindQueryValue, out var kind) && kind.ToString() == KindQueryValue && Enum.IsDefined(kind) ? kind : null;
+    private string KindQuery => KindFilter is { } kind ? $"?kind={kind}" : "";
+    private string ListUrl => $"/lore{KindQuery}";
+    private LoreEntry? Selected => entries.FirstOrDefault(entry => entry.Id == EntryId);
+    private LoreEntry[] Candidates => entries.Where(entry => entry.Id != editing?.Id).ToArray();
+    private bool HasFilters => search.Trim().Length > 0 || statusFilter.Length > 0 || tagFilter.Length > 0;
+    private IEnumerable<string> AllTags => entries.SelectMany(entry => entry.Tags)
+        .Distinct(StringComparer.OrdinalIgnoreCase).Order(StringComparer.OrdinalIgnoreCase);
+
+    private LoreEntry[] VisibleEntries
+    {
+        get
+        {
+            var terms = search.Split(' ', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
+            var filtered = entries.Where(entry =>
+                (KindFilter is null || entry.Kind == KindFilter)
+                && (statusFilter.Length == 0 || entry.Status.ToString() == statusFilter)
+                && (tagFilter.Length == 0 || entry.Tags.Contains(tagFilter, StringComparer.OrdinalIgnoreCase))
+                && terms.All(term => Matches(entry, term)));
+            var pinnedFirst = filtered.OrderByDescending(entry => entry.Pinned);
+            return (sort switch
+            {
+                "title" => pinnedFirst.ThenBy(entry => entry.Title, StringComparer.OrdinalIgnoreCase),
+                "status" => pinnedFirst.ThenBy(entry => entry.Status).ThenBy(entry => entry.Title, StringComparer.OrdinalIgnoreCase),
+                _ => pinnedFirst.ThenByDescending(entry => entry.Updated).ThenBy(entry => entry.Title, StringComparer.OrdinalIgnoreCase)
+            }).ToArray();
+        }
+    }
+
+    protected override void OnParametersSet()
+    {
+        editing = null;
+        confirmDelete = false;
+        error = null;
+        Refresh();
+    }
+
+    private static bool Matches(LoreEntry entry, string term) =>
+        entry.Title.Contains(term, StringComparison.OrdinalIgnoreCase)
+        || entry.Summary.Contains(term, StringComparison.OrdinalIgnoreCase)
+        || entry.Notes.Contains(term, StringComparison.OrdinalIgnoreCase)
+        || entry.Implementation.Contains(term, StringComparison.OrdinalIgnoreCase)
+        || entry.Tags.Any(tag => tag.Contains(term, StringComparison.OrdinalIgnoreCase));
+
+    private string NavClass(EntryKind? kind) => KindFilter == kind ? "nav-item active" : "nav-item";
+
+    private void ResetFilters() => search = statusFilter = tagFilter = "";
+
+    private void Refresh()
+    {
+        try
+        {
+            entries = Store.Snapshot();
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Text.Json.JsonException)
+        {
+            Logger.LogError(ex, "Could not read the lore catalog.");
+            error = "The lore catalog could not be read. Check the data directory and reload this page.";
+        }
+    }
+
+    private void NewEntry() => Edit(LoreEntry.New(KindFilter ?? EntryKind.Item));
+
+    private void Edit(LoreEntry entry)
+    {
+        error = null;
+        confirmDelete = false;
+        editing = entry;
+    }
+
+    private void CancelEdit() => editing = null;
+
+    private void Saved(LoreEntry entry)
+    {
+        editing = null;
+        Refresh();
+        Navigation.NavigateTo($"/lore/entry/{entry.Id}{KindQuery}");
+    }
+
+    private void LoadExamples()
+    {
+        error = null;
+        try
+        {
+            Store.LoadExamples();
+            Refresh();
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Text.Json.JsonException)
+        {
+            Logger.LogError(ex, "Could not load sample entries.");
+            error = "Sample entries could not be written to the data directory.";
+        }
+    }
+
+    private void Delete(LoreEntry entry)
+    {
+        error = null;
+        try
+        {
+            Store.Delete(entry.Id, entry.Revision);
+            Navigation.NavigateTo(ListUrl);
+        }
+        catch (InvalidOperationException ex)
+        {
+            error = ex.Message;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            Logger.LogError(ex, "Could not delete lore entry {EntryId}.", entry.Id);
+            error = "The entry could not be deleted.";
+        }
+    }
+}

@@ -1,15 +1,19 @@
 using HiileikeHome.Components;
+using HiileikeHome.Lore;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Authentication.OpenIdConnect;
 using Microsoft.AspNetCore.DataProtection;
+using Microsoft.AspNetCore.Http.HttpResults;
 using Microsoft.IdentityModel.Protocols.OpenIdConnect;
 
 var builder = WebApplication.CreateBuilder(args);
 
 // Add services to the container.
 builder.Services.AddRazorComponents()
-    .AddInteractiveServerComponents();
+    .AddInteractiveServerComponents()
+    .AddHubOptions(options => options.MaximumReceiveMessageSize = 512 * 1024);
+builder.Services.AddSingleton<LoreStore>();
 
 // Authentik login
 var authority = builder.Configuration["Authentik:Authority"];
@@ -25,8 +29,18 @@ var authentication = builder.Services
     .AddAuthentication(CookieAuthenticationDefaults.AuthenticationScheme)
     .AddCookie(options =>
     {
+        options.LoginPath = "/login";
         options.ExpireTimeSpan = TimeSpan.FromDays(30);
         options.SlidingExpiration = false;
+        options.Events.OnRedirectToLogin = context =>
+        {
+            if (context.Request.Path.StartsWithSegments("/lore/pictures"))
+                context.Response.StatusCode = StatusCodes.Status401Unauthorized;
+            else
+                context.Response.Redirect(context.RedirectUri);
+
+            return Task.CompletedTask;
+        };
     });
 
 if (authentikConfigured)
@@ -72,8 +86,12 @@ app.UseAntiforgery();
 
 app.MapStaticAssets();
 
-app.MapGet("/login", () => authentikConfigured
-    ? Results.Challenge(new AuthenticationProperties { RedirectUri = "/", IsPersistent = true }, [OpenIdConnectDefaults.AuthenticationScheme])
+app.MapGet("/login", (string? returnUrl) => authentikConfigured
+    ? Results.Challenge(new AuthenticationProperties
+    {
+        RedirectUri = RedirectHttpResult.IsLocalUrl(returnUrl) ? returnUrl : "/",
+        IsPersistent = true
+    }, [OpenIdConnectDefaults.AuthenticationScheme])
     : Results.Text("Sign-in isn't set up.", statusCode: StatusCodes.Status503ServiceUnavailable));
 
 app.MapPost("/logout", async (HttpContext context) =>
@@ -81,6 +99,17 @@ app.MapPost("/logout", async (HttpContext context) =>
     await context.SignOutAsync(CookieAuthenticationDefaults.AuthenticationScheme);
     return Results.Redirect("/");
 });
+
+app.MapGet("/lore/pictures/{id:guid}", (Guid id, LoreStore store, HttpContext context) =>
+{
+    var picture = store.FindPicture(id);
+    if (picture is null)
+        return Results.NotFound();
+
+    context.Response.Headers.CacheControl = "private, no-store";
+    context.Response.Headers.XContentTypeOptions = "nosniff";
+    return Results.File(store.PicturePath(id), picture.ContentType);
+}).RequireAuthorization();
 
 app.MapRazorComponents<App>()
     .AddInteractiveServerRenderMode();

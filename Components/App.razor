@@ -9,15 +9,16 @@
     <link rel="stylesheet" href="@Assets["lib/bootstrap/dist/css/bootstrap.min.css"]" />
     <link rel="stylesheet" href="@Assets["app.css"]" />
     <link rel="stylesheet" href="@Assets["HiileikeHome.styles.css"]" />
+    <link rel="stylesheet" href="@Assets["lore-builder.css"]" />
     <ImportMap />
     <link rel="icon" type="image/svg+xml" href="favicon.svg" />
     <link rel="icon" href="favicon.ico" sizes="any" />
     <link rel="apple-touch-icon" href="icon-180.png" />
-    <HeadOutlet />
+    <HeadOutlet @rendermode="InteractiveServer" />
 </head>
 
 <body>
-    <Routes />
+    <Routes @rendermode="InteractiveServer" />
     <ReconnectModal />
     <script src="@Assets["_framework/blazor.web.js"]"></script>
 </body>

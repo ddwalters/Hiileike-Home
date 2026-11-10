@@ -1,0 +1,28 @@
+<section class="edit-section">
+    <div class="section-heading">
+        <label for="@Id">@Title</label>
+        <button type="button" class="button small" aria-pressed="@preview" @onclick="() => preview = !preview">
+            @(preview ? "Write" : "Preview")
+        </button>
+    </div>
+    @if (preview)
+    {
+        <div class="note-preview"><NoteText Value="@Value" /></div>
+    }
+    else
+    {
+        <textarea id="@Id" rows="6" value="@Value" @oninput="Change" maxlength="50000" placeholder="@Placeholder"></textarea>
+        <small class="muted">Use # headings, **bold**, *italics*, lists and inline code.</small>
+    }
+</section>
+
+@code {
+    [Parameter, EditorRequired] public string Id { get; set; } = "";
+    [Parameter, EditorRequired] public string Title { get; set; } = "";
+    [Parameter] public string Placeholder { get; set; } = "";
+    [Parameter] public string Value { get; set; } = "";
+    [Parameter] public EventCallback<string> ValueChanged { get; set; }
+
+    private bool preview;
+    private Task Change(ChangeEventArgs args) => ValueChanged.InvokeAsync(args.Value?.ToString() ?? "");
+}

@@ -1,5 +1,4 @@
 @page "/"
-@using Microsoft.AspNetCore.Components.Authorization
 
 <PageTitle>Hiileike</PageTitle>
 
@@ -21,7 +20,7 @@
                 @foreach (var app in Apps)
                 {
                     <div class="app">
-                        <a class="tile" href="@app.Url" target="_blank" rel="noopener noreferrer">
+                        <a class="tile" href="@app.Url" target="@(app.SameTab ? null : "_blank")" rel="@(app.SameTab ? null : "noopener noreferrer")">
                             <span class="chip"><img src="@app.Icon" alt="" /></span>
                             <span class="label">@app.Label</span>
                         </a>
@@ -86,7 +85,7 @@
 @code {
     private record LocalLink(string Label, string Url, string? Meta = null);
 
-    private record AppTile(string Label, string Icon, string Url, LocalLink[]? Local = null);
+    private record AppTile(string Label, string Icon, string Url, LocalLink[]? Local = null, bool SameTab = false);
 
     private record Tool(string Label, string Url, bool LanOnly = false);
 
@@ -105,6 +104,8 @@
         [
             new("Suwayomi", "http://192.168.1.9:4567/library"),
         ]),
+
+        new("Lore Builder", "/images/quill.svg", "/lore", SameTab: true),
     ];
 
     private static readonly Tool[] Tools =

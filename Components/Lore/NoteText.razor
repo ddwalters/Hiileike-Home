@@ -1,0 +1,87 @@
+@using System.Text.Encodings.Web
+@using System.Text.RegularExpressions
+
+@if (string.IsNullOrWhiteSpace(Value))
+{
+    <p class="muted">@EmptyText</p>
+}
+else
+{
+    <div class="note-text">@((MarkupString)Render(Value))</div>
+}
+
+@code {
+    [Parameter] public string Value { get; set; } = "";
+    [Parameter] public string EmptyText { get; set; } = "No notes yet.";
+
+    private static readonly Regex LineSyntax = new(@"^(#{1,6}|[-*]|\d+\.)\s+(.+)$");
+    private static readonly Regex InlineSyntax = new(@"`([^`]+)`|\*\*([^*]+)\*\*|\*([^*]+)\*");
+
+    private static string Inline(string line)
+    {
+        var encoded = HtmlEncoder.Default.Encode(line);
+        return InlineSyntax.Replace(encoded, match =>
+        {
+            if (match.Groups[1].Success)
+                return $"<code>{match.Groups[1].Value}</code>";
+            if (match.Groups[2].Success)
+                return $"<strong>{match.Groups[2].Value}</strong>";
+            return $"<em>{match.Groups[3].Value}</em>";
+        });
+    }
+
+    private static string Render(string text)
+    {
+        var html = new System.Text.StringBuilder();
+        string? block = null;
+
+        void EndBlock()
+        {
+            if (block is null)
+                return;
+            html.Append("</").Append(block).Append('>');
+            block = null;
+        }
+
+        foreach (var rawLine in text.ReplaceLineEndings("\n").Split('\n'))
+        {
+            var line = rawLine.Trim();
+            if (line.Length == 0)
+            {
+                EndBlock();
+                continue;
+            }
+
+            var match = LineSyntax.Match(line);
+            var marker = match.Groups[1].Value;
+            if (marker.StartsWith('#'))
+            {
+                EndBlock();
+                var heading = $"h{Math.Min(marker.Length + 2, 6)}";
+                html.Append('<').Append(heading).Append('>').Append(Inline(match.Groups[2].Value))
+                    .Append("</").Append(heading).Append('>');
+                continue;
+            }
+
+            var next = marker switch { "" => "p", "-" or "*" => "ul", _ => "ol" };
+            if (block != next)
+            {
+                EndBlock();
+                block = next;
+                html.Append('<').Append(block).Append('>');
+            }
+            else if (block == "p")
+            {
+                html.Append("<br>");
+            }
+
+            if (block == "p")
+                html.Append(Inline(line));
+            else
+                html.Append("<li>").Append(Inline(match.Groups[2].Value)).Append("</li>");
+        }
+
+        EndBlock();
+        return html.ToString();
+    }
+}

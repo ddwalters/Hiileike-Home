@@ -364,3 +364,5 @@ FodyWeavers.xsd
 
 # Local-only sign-in settings for running the site from Visual Studio
 HiileikeHome.settings.Development.json
+
+/App_Data/
