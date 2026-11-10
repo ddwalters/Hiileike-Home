@@ -5,6 +5,9 @@ public enum EntryStatus { Idea, Planned, InProgress, Implemented }
 
 public sealed record Picture(Guid Id, string Name, string ContentType);
 public sealed record PictureUpload(Picture Picture, byte[] Bytes);
+public sealed record LoreLink(Guid Id, EntryKind Kind, string Title);
+public sealed record LoreRevision(LoreEntry Entry, LoreLink[] Links);
+public sealed record LoreDraft(Guid Stamp, LoreEntry Entry, string Tags);
 
 public sealed record LoreEntry(
     Guid Id, EntryKind Kind, EntryStatus Status, string Title, string Summary,

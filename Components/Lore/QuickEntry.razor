@@ -1,0 +1,101 @@
+@inject LoreStore Store
+@inject IJSRuntime JS
+@inject ILogger<QuickEntry> Logger
+
+<NavigationLock ConfirmExternalNavigation="@Dirty" OnBeforeInternalNavigation="BeforeNavigation" />
+
+<form class="panel edit-section quick-entry" @onsubmit="Save" @onsubmit:preventDefault>
+    <h2>@Heading</h2>
+    <div class="field-grid">
+        <label>Title
+            <input @ref="titleInput" @bind="title" @bind:event="oninput" required maxlength="120" />
+        </label>
+        <label>Type
+            <select @bind="kind">
+                @foreach (var option in Enum.GetValues<EntryKind>())
+                {
+                    <option value="@option">@option</option>
+                }
+            </select>
+        </label>
+    </div>
+    <label>Note
+        <textarea @bind="notes" @bind:event="oninput" rows="3" maxlength="50000" placeholder="Optional"></textarea>
+    </label>
+    @if (error is not null)
+    {
+        <p class="notice error" role="alert">@error</p>
+    }
+    <div class="actions">
+        <button type="submit" class="button primary">@SaveLabel</button>
+        <button type="button" class="button" @onclick="Cancel">Cancel</button>
+    </div>
+</form>
+
+@code {
+    [Parameter] public EntryKind InitialKind { get; set; }
+    [Parameter] public string Heading { get; set; } = "Quick capture";
+    [Parameter] public string SaveLabel { get; set; } = "Save entry";
+    [Parameter] public EventCallback<LoreEntry> Saved { get; set; }
+    [Parameter] public EventCallback Cancelled { get; set; }
+
+    private ElementReference titleInput;
+    private string title = "";
+    private string notes = "";
+    private string? error;
+    private EntryKind kind;
+    private bool finished;
+    private bool Dirty => !finished && (title.Length > 0 || notes.Length > 0);
+
+    protected override void OnInitialized() => kind = InitialKind;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+            await titleInput.FocusAsync();
+    }
+
+    private async Task Save()
+    {
+        if (finished)
+            return;
+
+        if (title.Trim().Length is 0 or > 120)
+        {
+            error = "Enter a title between 1 and 120 characters.";
+            return;
+        }
+
+        LoreEntry saved;
+        try
+        {
+            saved = Store.Save(LoreEntry.New(kind) with { Title = title, Notes = notes }, []);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Text.Json.JsonException)
+        {
+            Logger.LogError(ex, "Could not save a quick entry.");
+            error = "Could not save the entry. Your text is still here.";
+            return;
+        }
+
+        finished = true;
+        await Saved.InvokeAsync(saved);
+    }
+
+    private async Task Cancel()
+    {
+        if (Dirty && !await ConfirmDiscard())
+            return;
+
+        finished = true;
+        await Cancelled.InvokeAsync();
+    }
+
+    private async Task BeforeNavigation(LocationChangingContext context)
+    {
+        if (Dirty && !await ConfirmDiscard())
+            context.PreventNavigation();
+    }
+
+    private ValueTask<bool> ConfirmDiscard() => JS.InvokeAsync<bool>("confirm", "Discard this quick entry?");
+}

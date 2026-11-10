@@ -11,7 +11,8 @@
     }
     else
     {
-        <textarea id="@Id" rows="6" value="@Value" @oninput="Change" maxlength="50000" placeholder="@Placeholder"></textarea>
+        <textarea id="@Id" rows="6" @bind:get="Value" @bind:set="SetValue" @bind:event="oninput"
+                  maxlength="50000" placeholder="@Placeholder"></textarea>
         <small class="muted">Use # headings, **bold**, *italics*, lists and inline code.</small>
     }
 </section>
@@ -24,5 +25,5 @@
     [Parameter] public EventCallback<string> ValueChanged { get; set; }
 
     private bool preview;
-    private Task Change(ChangeEventArgs args) => ValueChanged.InvokeAsync(args.Value?.ToString() ?? "");
+    private Task SetValue(string value) => ValueChanged.InvokeAsync(value);
 }

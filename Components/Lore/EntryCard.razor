@@ -1,4 +1,4 @@
-<a class="entry-card @Entry.Kind" href="@($"/lore/entry/{Entry.Id}{KindQuery}")">
+<a class="entry-card @Entry.Kind" href="@Href">
     @if (Entry.Pictures.FirstOrDefault() is { } cover)
     {
         <img class="card-cover" src="@($"/lore/pictures/{cover.Id}")" alt="" loading="lazy" />
@@ -43,5 +43,5 @@
 
 @code {
     [Parameter, EditorRequired] public LoreEntry Entry { get; set; } = default!;
-    [Parameter] public string KindQuery { get; set; } = "";
+    [Parameter, EditorRequired] public string Href { get; set; } = "";
 }

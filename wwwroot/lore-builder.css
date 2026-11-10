@@ -200,6 +200,14 @@
     .related strong { display: block; font-size: .85rem; }
     .related small { display: block; font-size: .72rem; }
     .related > svg { color: var(--muted); }
+    .revision-list { max-height: 16rem; overflow: auto; }
+    .revision-link[aria-current="page"], .revision-link:hover { border-color: var(--accent); }
+    .revision-link strong, .revision-link small { overflow-wrap: anywhere; }
+    .notice .back-link { margin: 0 0 0 .35rem; }
+    .tag-suggestions { display: flex; flex-wrap: wrap; gap: 5px; }
+    .tag-suggestions .button { max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
+    .draft-status { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; color: var(--muted); margin-bottom: 12px; }
+    .quick-entry { margin-block: 14px; }
     .updated { margin: 14px 0; }
     .gallery { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 140px), 1fr)); gap: 8px; }
     .gallery a { overflow: hidden; background: var(--bg); border-radius: 9px; border: 1px solid var(--border); }

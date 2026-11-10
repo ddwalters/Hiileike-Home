@@ -1,5 +1,6 @@
 @page "/lore"
 @page "/lore/entry/{EntryId:guid}"
+@page "/lore/entry/{EntryId:guid}/revision/{RevisionNumber:int}"
 @attribute [Authorize]
 @layout LoreLayout
 @inject LoreStore Store
@@ -33,9 +34,12 @@
     <div class="workspace">
         <header class="topbar">
             <div class="crumb"><LoreIcon Name="book" Size="16" /> <a href="/">Hiileike Home</a> <b>/</b> @(EntryId is null ? KindFilter?.Plural() ?? "All entries" : Selected?.Kind.Plural() ?? "Entry")</div>
-            @if (editing is null)
+            @if (editing is null && !quickCapture)
             {
-                <button class="button primary" @onclick="NewEntry"><LoreIcon Name="plus" Size="18" /> New entry</button>
+                <div class="actions">
+                    <button class="button" @onclick="() => quickCapture = true">Quick capture</button>
+                    <button class="button primary" @onclick="NewEntry"><LoreIcon Name="plus" Size="18" /> New entry</button>
+                </div>
             }
         </header>
         <main class="content">
@@ -45,11 +49,20 @@
             }
             @if (editing is not null)
             {
-                <EntryEditor @key="editing.Id" Entry="editing" Candidates="Candidates" Saved="Saved" Cancelled="CancelEdit" />
+                <EntryEditor @key="editing.Id" Entry="editing" Candidates="Candidates" KnownTags="AllTags"
+                             Saved="Saved" Closed="CancelEdit" CatalogChanged="Refresh" />
+            }
+            else if (quickCapture)
+            {
+                <QuickEntry InitialKind="@(KindFilter ?? EntryKind.Item)" Saved="Saved" Cancelled="() => quickCapture = false" />
             }
             else if (Selected is { } entry)
             {
                 <a class="back-link" href="@ListUrl"><LoreIcon Name="back" Size="16" /> Back to codex</a>
+                @if (historical is not null)
+                {
+                    <p class="notice">Viewing revision @entry.Revision. <a class="back-link" href="@EntryUrl(entry.Id)">View current entry</a></p>
+                }
                 <div class="page-title">
                     <div>
                         <div class="detail-type @entry.Kind">
@@ -67,7 +80,10 @@
                             <p class="muted">@entry.Summary</p>
                         }
                     </div>
-                    <button class="button" @onclick="() => Edit(entry)"><LoreIcon Name="edit" Size="17" /> Edit entry</button>
+                    @if (historical is null)
+                    {
+                        <button class="button" @onclick="() => Edit(entry)"><LoreIcon Name="edit" Size="17" /> Edit entry</button>
+                    }
                 </div>
                 <div class="detail-grid">
                     <div class="stack">
@@ -102,19 +118,48 @@
                     </div>
                     <div class="stack">
                         <section class="panel note-panel">
-                            <h2><LoreIcon Name="link" /> Linked entries <small>@entry.Links.Length</small></h2>
-                            @if (entry.Links.Length == 0)
+                            @{ var links = VisibleLinks(entry); }
+                            <h2><LoreIcon Name="link" /> Linked entries <small>@links.Length</small></h2>
+                            @if (links.Length == 0)
                             {
                                 <p class="muted">No linked entries yet.</p>
                             }
-                            @foreach (var link in entries.Where(other => entry.Links.Contains(other.Id)).OrderBy(other => other.Title))
+                            @foreach (var link in links)
                             {
-                                <a class="related @link.Kind" href="@($"/lore/entry/{link.Id}{KindQuery}")">
-                                    <span class="kind-chip"><LoreIcon Name="@link.Kind.ToString()" Size="16" /></span>
-                                    <span><strong>@link.Title</strong><small>@link.Kind</small></span>
-                                    <LoreIcon Name="arrow" Size="16" />
-                                </a>
+                                if (entries.Any(other => other.Id == link.Id))
+                                {
+                                    <a class="related @link.Kind" href="@EntryUrl(link.Id)">
+                                        <span class="kind-chip"><LoreIcon Name="@link.Kind.ToString()" Size="16" /></span>
+                                        <span><strong>@link.Title</strong><small>@link.Kind</small></span>
+                                        <LoreIcon Name="arrow" Size="16" />
+                                    </a>
+                                }
+                                else
+                                {
+                                    <div class="related @link.Kind">
+                                        <span class="kind-chip"><LoreIcon Name="@link.Kind.ToString()" Size="16" /></span>
+                                        <span><strong>@link.Title</strong><small>@link.Kind · Deleted</small></span>
+                                    </div>
+                                }
                             }
+                        </section>
+                        <section class="panel note-panel">
+                            <h2>Revision history <small>@revisions.Length</small></h2>
+                            <nav class="revision-list" aria-label="Entry revisions">
+                                @foreach (var version in revisions.Reverse())
+                                {
+                                    var saved = version.Entry;
+                                    var isCurrent = saved.Revision == revisions[^1].Entry.Revision;
+                                    var isSelected = saved.Revision == entry.Revision;
+                                    <a class="related revision-link" aria-current="@(isSelected ? "page" : null)"
+                                       href="@(isCurrent ? EntryUrl(entry.Id) : RevisionUrl(entry.Id, saved.Revision))">
+                                        <span>
+                                            <strong>Revision @saved.Revision @(isCurrent ? "· Current" : null)</strong>
+                                            <small>@saved.Updated.ToLocalTime().ToString("MMM d, yyyy · h:mm tt")</small>
+                                        </span>
+                                    </a>
+                                }
+                            </nav>
                         </section>
                         <section class="panel note-panel">
                             <h2>Entry details</h2>
@@ -129,9 +174,13 @@
                                 }
                             </div>
                             <p class="muted updated">Updated @entry.Updated.ToLocalTime().ToString("MMM d, yyyy")</p>
-                            @if (confirmDelete)
+                            @if (historical is not null)
                             {
-                                <p class="muted">Delete this entry, its pictures, and its links?</p>
+                                <p class="muted">Past revisions are read-only.</p>
+                            }
+                            else if (confirmDelete)
+                            {
+                                <p class="muted">Delete this entry, all its revisions, and its pictures?</p>
                                 <div class="actions">
                                     <button class="button small" @onclick="() => confirmDelete = false">Cancel</button>
                                     <button class="button small danger" @onclick="() => Delete(entry)">Delete entry</button>
@@ -149,9 +198,18 @@
             {
                 <div class="panel empty">
                     <span class="empty-icon"><LoreIcon Name="book" Size="28" /></span>
-                    <h1>Entry unavailable</h1>
-                    <p class="muted">This entry could not be found in the codex.</p>
-                    <a class="button" href="@ListUrl">Back to codex</a>
+                    @if (RevisionNumber is not null && entries.Any(other => other.Id == EntryId))
+                    {
+                        <h1>Revision unavailable</h1>
+                        <p class="muted">This revision could not be found.</p>
+                        <a class="button" href="@EntryUrl(EntryId.Value)">View current entry</a>
+                    }
+                    else
+                    {
+                        <h1>Entry unavailable</h1>
+                        <p class="muted">This entry could not be found in the codex.</p>
+                        <a class="button" href="@ListUrl">Back to codex</a>
+                    }
                 </div>
             }
             else
@@ -215,7 +273,7 @@
                         <div class="entry-grid">
                             @foreach (var item in visibleEntries)
                             {
-                                <EntryCard @key="item.Id" Entry="item" KindQuery="KindQuery" />
+                                <EntryCard @key="item.Id" Entry="item" Href="@EntryUrl(item.Id)" />
                             }
                         </div>
                     }
@@ -250,11 +308,15 @@
 
 @code {
     [Parameter] public Guid? EntryId { get; set; }
+    [Parameter] public int? RevisionNumber { get; set; }
     [SupplyParameterFromQuery(Name = "kind")] public string? KindQueryValue { get; set; }
 
     private static readonly EntryKind[] Kinds = Enum.GetValues<EntryKind>();
     private LoreEntry[] entries = [];
+    private LoreRevision[] revisions = [];
+    private LoreRevision? historical;
     private LoreEntry? editing;
+    private bool quickCapture;
     private string? error;
     private string search = "";
     private string statusFilter = "";
@@ -265,7 +327,8 @@
     private EntryKind? KindFilter => Enum.TryParse<EntryKind>(KindQueryValue, out var kind) && kind.ToString() == KindQueryValue && Enum.IsDefined(kind) ? kind : null;
     private string KindQuery => KindFilter is { } kind ? $"?kind={kind}" : "";
     private string ListUrl => $"/lore{KindQuery}";
-    private LoreEntry? Selected => entries.FirstOrDefault(entry => entry.Id == EntryId);
+    private LoreEntry? Selected => RevisionNumber is null
+        ? revisions.LastOrDefault()?.Entry : historical?.Entry;
     private LoreEntry[] Candidates => entries.Where(entry => entry.Id != editing?.Id).ToArray();
     private bool HasFilters => search.Trim().Length > 0 || statusFilter.Length > 0 || tagFilter.Length > 0;
     private IEnumerable<string> AllTags => entries.SelectMany(entry => entry.Tags)
@@ -294,6 +357,7 @@
     protected override void OnParametersSet()
     {
         editing = null;
+        quickCapture = false;
         confirmDelete = false;
         error = null;
         Refresh();
@@ -308,16 +372,31 @@
 
     private string NavClass(EntryKind? kind) => KindFilter == kind ? "nav-item active" : "nav-item";
 
+    private string EntryUrl(Guid id) => $"/lore/entry/{id}{KindQuery}";
+
+    private string RevisionUrl(Guid id, int revision) => $"/lore/entry/{id}/revision/{revision}{KindQuery}";
+
+    private LoreLink[] VisibleLinks(LoreEntry entry) => (historical?.Links
+        ?? entries.Where(other => entry.Links.Contains(other.Id))
+            .Select(other => new LoreLink(other.Id, other.Kind, other.Title)))
+        .OrderBy(link => link.Title, StringComparer.OrdinalIgnoreCase).ToArray();
+
     private void ResetFilters() => search = statusFilter = tagFilter = "";
 
     private void Refresh()
     {
         try
         {
-            entries = Store.Snapshot();
+            (entries, revisions) = Store.Snapshot(EntryId);
+            historical = revisions.FirstOrDefault(version => version.Entry.Revision == RevisionNumber);
+            if (tagFilter.Length > 0)
+                tagFilter = AllTags.FirstOrDefault(tag => tag.Equals(tagFilter, StringComparison.OrdinalIgnoreCase)) ?? "";
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Text.Json.JsonException)
         {
+            entries = [];
+            revisions = [];
+            historical = null;
             Logger.LogError(ex, "Could not read the lore catalog.");
             error = "The lore catalog could not be read. Check the data directory and reload this page.";
         }
@@ -332,13 +411,18 @@
         editing = entry;
     }
 
-    private void CancelEdit() => editing = null;
+    private void CancelEdit()
+    {
+        editing = null;
+        Refresh();
+    }
 
     private void Saved(LoreEntry entry)
     {
         editing = null;
+        quickCapture = false;
         Refresh();
-        Navigation.NavigateTo($"/lore/entry/{entry.Id}{KindQuery}");
+        Navigation.NavigateTo(EntryUrl(entry.Id));
     }
 
     private void LoadExamples()

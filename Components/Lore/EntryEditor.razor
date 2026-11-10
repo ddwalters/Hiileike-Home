@@ -1,9 +1,28 @@
 @inject LoreStore Store
 @inject IJSRuntime JS
 @inject ILogger<EntryEditor> Logger
+@implements IDisposable
 
-<NavigationLock ConfirmExternalNavigation="@Dirty" OnBeforeInternalNavigation="BeforeNavigation" />
+<NavigationLock ConfirmExternalNavigation="@(draftPending || HasUnsavedPictures)" OnBeforeInternalNavigation="BeforeNavigation" />
 
+@if (recovery is not null)
+{
+    <section class="panel edit-section">
+        <h1>Recover draft?</h1>
+        <p class="muted">This entry changed after the draft was started. Recovering it loads the older draft into the editor for review. Saving it will replace the current entry.</p>
+        @if (draftProblem is not null)
+        {
+            <p class="notice error" role="alert">@draftProblem</p>
+        }
+        <div class="actions">
+            <button class="button primary" @onclick="Recover">Recover draft</button>
+            <button class="button" @onclick="Discard">Discard draft</button>
+            <button class="button" @onclick="Close">Close editor</button>
+        </div>
+    </section>
+}
+else
+{
 <form class="editor" @onsubmit="Save" @onsubmit:preventDefault>
     <div class="page-title">
         <div>
@@ -12,13 +31,23 @@
             <p class="muted">Capture the idea, its connections, and how it works in your game.</p>
         </div>
         <div class="actions">
-            <button type="button" class="button" @onclick="Cancel" disabled="@reading">Cancel</button>
-            <button type="submit" class="button primary" disabled="@reading"><LoreIcon Name="check" Size="18" /> Save entry</button>
+            <button type="button" class="button" @onclick="Close" disabled="@(reading || linkedCapture)">Close editor</button>
+            <button type="submit" class="button primary" disabled="@(reading || linkedCapture)"><LoreIcon Name="check" Size="18" /> Save entry</button>
         </div>
     </div>
     @if (error is not null)
     {
         <p class="notice error" role="alert">@error</p>
+    }
+    @if (draftPending || draftStamp is not null || draftProblem is not null)
+    {
+        <div class="draft-status">
+            <span role="status">@(draftProblem ?? (draftPending ? "Saving draft…" : recovered ? "Draft recovered" : "Draft saved"))</span>
+            @if (HasDraft)
+            {
+                <button type="button" class="button small" @onclick="Discard" disabled="@(reading || linkedCapture)">Discard draft</button>
+            }
+        </div>
     }
     <div class="detail-grid">
         <div class="stack">
@@ -57,14 +86,27 @@
             <section class="panel edit-section">
                 <h2>Organization</h2>
                 <label>Tags
-                    <input @bind="tags" @bind:event="oninput" maxlength="500" placeholder="Coast, Act I, Exploration" />
+                    <input @ref="tagInput" @bind="TagsText" @bind:event="oninput" maxlength="@TagLengthLimit" placeholder="Coast, Act I, Exploration" />
                 </label>
-                <small class="muted">Separate tags with commas.</small>
+                <small class="muted">Choose an existing tag or separate new tags with commas.</small>
+                @if (TagSuggestions is { Length: > 0 } suggestions)
+                {
+                    <div class="tag-suggestions" role="group" aria-label="Suggested existing tags">
+                        @foreach (var suggestion in suggestions)
+                        {
+                            <button type="button" class="button small" aria-label="@($"Use existing tag {suggestion}")"
+                                    @onclick="() => UseTag(suggestion)">@suggestion</button>
+                        }
+                    </div>
+                }
                 <label class="checkbox"><input type="checkbox" @bind="Pinned" /> Pin to the top of the codex</label>
             </section>
             <section class="panel edit-section">
                 <h2><LoreIcon Name="link" /> Linked entries</h2>
                 <small class="muted">Links appear on both entries.</small>
+                <button type="button" class="button small" @onclick="() => linkedCapture = true" disabled="@linkedCapture">
+                    <LoreIcon Name="plus" Size="16" /> Create linked entry
+                </button>
                 @if (Candidates.Count == 0)
                 {
                     <p class="muted">Create another entry to link it here.</p>
@@ -127,18 +169,32 @@
                         </button>
                     </div>
                 }
+                @if (uploads.Count > 0)
+                {
+                    <small class="muted">Save the entry to keep newly added pictures.</small>
+                }
             </section>
         </div>
     </div>
 </form>
+    @if (linkedCapture)
+    {
+        <QuickEntry InitialKind="EntryKind.Item" Heading="Create linked entry" SaveLabel="Create and select link"
+                    Saved="LinkCreated" Cancelled="() => linkedCapture = false" />
+    }
+}
 
 @code {
     [Parameter, EditorRequired] public LoreEntry Entry { get; set; } = default!;
     [Parameter, EditorRequired] public IReadOnlyList<LoreEntry> Candidates { get; set; } = [];
+    [Parameter] public IEnumerable<string> KnownTags { get; set; } = [];
     [Parameter] public EventCallback<LoreEntry> Saved { get; set; }
-    [Parameter] public EventCallback Cancelled { get; set; }
+    [Parameter] public EventCallback Closed { get; set; }
+    [Parameter] public EventCallback CatalogChanged { get; set; }
 
     private LoreEntry draft = default!;
+    private const int TagLengthLimit = 500;
+    private ElementReference tagInput;
     private readonly List<PictureUpload> uploads = [];
     private string tags = "";
     private string originalTags = "";
@@ -147,15 +203,35 @@
     private string? pictureError;
     private bool reading;
     private bool finished;
+    private bool linkedCapture;
+    private bool draftPending;
+    private bool recovered;
+    private string? draftProblem;
+    private Guid? draftStamp;
+    private LoreDraft? recovery;
+    private CancellationTokenSource? autosave;
 
-    private bool Dirty => !finished && (draft != Entry || tags != originalTags || uploads.Count > 0 || reading);
-    private string Title { get => draft.Title; set => draft = draft with { Title = value }; }
-    private string Summary { get => draft.Summary; set => draft = draft with { Summary = value }; }
-    private string Notes { get => draft.Notes; set => draft = draft with { Notes = value }; }
-    private string Implementation { get => draft.Implementation; set => draft = draft with { Implementation = value }; }
-    private EntryKind Kind { get => draft.Kind; set => draft = draft with { Kind = value }; }
-    private EntryStatus Status { get => draft.Status; set => draft = draft with { Status = value }; }
-    private bool Pinned { get => draft.Pinned; set => draft = draft with { Pinned = value }; }
+    private Guid DraftSlot => Entry.Revision == 0 ? Guid.Empty : Entry.Id;
+    private bool HasDraft => draftStamp is not null || draftPending || draft != Entry || tags != originalTags;
+    private bool HasUnsavedPictures => !finished && (uploads.Count > 0 || reading);
+    private string Title { get => draft.Title; set => UpdateDraft(draft with { Title = value }); }
+    private string Summary { get => draft.Summary; set => UpdateDraft(draft with { Summary = value }); }
+    private string Notes { get => draft.Notes; set => UpdateDraft(draft with { Notes = value }); }
+    private string Implementation { get => draft.Implementation; set => UpdateDraft(draft with { Implementation = value }); }
+    private EntryKind Kind { get => draft.Kind; set => UpdateDraft(draft with { Kind = value }); }
+    private EntryStatus Status { get => draft.Status; set => UpdateDraft(draft with { Status = value }); }
+    private bool Pinned { get => draft.Pinned; set => UpdateDraft(draft with { Pinned = value }); }
+    private string TagsText
+    {
+        get => tags;
+        set
+        {
+            if (value == tags)
+                return;
+            tags = value;
+            QueueDraft();
+        }
+    }
 
     private IEnumerable<LoreEntry> FilteredCandidates => Candidates
         .Where(entry => entry.Title.Contains(linkSearch.Trim(), StringComparison.OrdinalIgnoreCase)
@@ -163,26 +239,165 @@
         .OrderByDescending(entry => draft.Links.Contains(entry.Id))
         .ThenBy(entry => entry.Title, StringComparer.OrdinalIgnoreCase);
 
+    private string[] TagSuggestions
+    {
+        get
+        {
+            var parts = tags.Split(',');
+            var fragment = parts[^1].Trim();
+            var completed = parts[..^1].Select(part => part.Trim()).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var prefixLength = parts.Length > 1 ? tags.LastIndexOf(',') + 2 : 0;
+            return KnownTags.Where(tag => !completed.Contains(tag)
+                    && !tag.Equals(fragment, StringComparison.OrdinalIgnoreCase)
+                    && tag.StartsWith(fragment, StringComparison.OrdinalIgnoreCase)
+                    && prefixLength + tag.Length <= TagLengthLimit)
+                .Take(8).ToArray();
+        }
+    }
+
+    private async Task UseTag(string tag)
+    {
+        var separator = tags.LastIndexOf(',');
+        TagsText = separator < 0 ? tag : $"{tags[..(separator + 1)]} {tag}";
+        await tagInput.FocusAsync();
+    }
+
     protected override void OnInitialized()
     {
         draft = Entry;
         tags = originalTags = string.Join(", ", Entry.Tags);
+        try
+        {
+            var stored = Store.LoadDraft(DraftSlot);
+            if (stored is null)
+                return;
+
+            draftStamp = stored.Stamp;
+            if (stored.Entry.Revision == Entry.Revision)
+                ApplyDraft(stored);
+            else
+                recovery = stored;
+        }
+        catch (Exception ex) when (IsDraftError(ex))
+        {
+            Logger.LogWarning(ex, "Could not read lore draft {DraftSlot}.", DraftSlot);
+            draftProblem = "Could not read the saved draft.";
+        }
     }
 
-    private void ToggleLink(Guid id) => draft = draft with
+    private void ApplyDraft(LoreDraft stored)
+    {
+        draft = stored.Entry with { Revision = Entry.Revision };
+        tags = stored.Tags;
+        recovered = true;
+    }
+
+    private void Recover()
+    {
+        if (recovery is not { } stored)
+            return;
+
+        ApplyDraft(stored);
+        recovery = null;
+        QueueDraft();
+    }
+
+    private void UpdateDraft(LoreEntry value)
+    {
+        if (value == draft)
+            return;
+        draft = value;
+        QueueDraft();
+    }
+
+    private void ToggleLink(Guid id) => UpdateDraft(draft with
     {
         Links = draft.Links.Contains(id) ? draft.Links.Where(link => link != id).ToArray() : [.. draft.Links, id]
-    };
+    });
 
-    private void SetCover(Picture picture) => draft = draft with
+    private void SetCover(Picture picture) => UpdateDraft(draft with
     {
         Pictures = [picture, .. draft.Pictures.Where(other => other != picture)]
-    };
+    });
 
-    private void RemovePicture(Picture picture) => draft = draft with
+    private void RemovePicture(Picture picture) => UpdateDraft(draft with
     {
         Pictures = draft.Pictures.Where(other => other != picture).ToArray()
-    };
+    });
+
+    private async Task LinkCreated(LoreEntry entry)
+    {
+        linkedCapture = false;
+        ToggleLink(entry.Id);
+        FlushDraft();
+        await CatalogChanged.InvokeAsync();
+    }
+
+    private void QueueDraft()
+    {
+        if (finished)
+            return;
+
+        draftPending = true;
+        recovered = false;
+        draftProblem = null;
+        CancelAutosave();
+        autosave = new CancellationTokenSource();
+        _ = SaveAfterPause(autosave.Token);
+    }
+
+    private async Task SaveAfterPause(CancellationToken cancellation)
+    {
+        try
+        {
+            await Task.Delay(650, cancellation);
+            if (!cancellation.IsCancellationRequested)
+            {
+                FlushDraft();
+                StateHasChanged();
+            }
+        }
+        catch (OperationCanceledException) when (cancellation.IsCancellationRequested) { }
+    }
+
+    private bool FlushDraft()
+    {
+        if (!draftPending)
+            return true;
+
+        CancelAutosave();
+        try
+        {
+            var stamp = Guid.NewGuid();
+            if (!Store.SaveDraft(DraftSlot, new LoreDraft(stamp, draft, tags), draftStamp))
+            {
+                draftProblem = "Another editor changed this draft. You can still save the entry if its revision is current.";
+                return false;
+            }
+
+            draftStamp = stamp;
+            draftPending = false;
+            draftProblem = null;
+            return true;
+        }
+        catch (Exception ex) when (IsDraftError(ex))
+        {
+            Logger.LogWarning(ex, "Could not autosave lore draft {DraftSlot}.", DraftSlot);
+            draftProblem = "Could not autosave the draft. Your edits are still here.";
+            return false;
+        }
+    }
+
+    private void CancelAutosave()
+    {
+        autosave?.Cancel();
+        autosave?.Dispose();
+        autosave = null;
+    }
+
+    private static bool IsDraftError(Exception ex) => ex is IOException or UnauthorizedAccessException or System.Text.Json.JsonException;
+
+    public void Dispose() => CancelAutosave();
 
     private async Task AddPictures(InputFileChangeEventArgs args)
     {
@@ -258,7 +473,7 @@
 
     private async Task Save()
     {
-        if (reading || finished)
+        if (reading || finished || linkedCapture)
             return;
 
         error = null;
@@ -274,7 +489,7 @@
             error = ex.Message;
             return;
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        catch (Exception ex) when (IsDraftError(ex))
         {
             Logger.LogError(ex, "Could not save lore entry {EntryId}.", draft.Id);
             error = "The entry could not be written to disk. Your edits are still here.";
@@ -282,23 +497,63 @@
         }
 
         finished = true;
+        draftPending = false;
+        CancelAutosave();
+        ClearStoredDraft();
         await Saved.InvokeAsync(saved);
     }
 
-    private async Task Cancel()
+    private bool ClearStoredDraft()
     {
-        if (Dirty && !await ConfirmDiscard())
+        if (draftStamp is not { } stamp)
+            return true;
+
+        try
+        {
+            Store.ClearDraft(DraftSlot, stamp);
+            draftStamp = null;
+            return true;
+        }
+        catch (Exception ex) when (IsDraftError(ex))
+        {
+            Logger.LogWarning(ex, "Could not remove lore draft {DraftSlot}.", DraftSlot);
+            draftProblem = "Could not remove the saved draft.";
+            return false;
+        }
+    }
+
+    private async Task Close()
+    {
+        if (linkedCapture || !FlushDraft() || (HasUnsavedPictures && !await ConfirmLeave()))
             return;
 
         finished = true;
-        await Cancelled.InvokeAsync();
+        await Closed.InvokeAsync();
+    }
+
+    private async Task Discard()
+    {
+        if (!await JS.InvokeAsync<bool>("confirm", "Discard this draft and any unsaved pictures?"))
+            return;
+
+        CancelAutosave();
+        if (!ClearStoredDraft())
+            return;
+
+        finished = true;
+        draftPending = false;
+        await Closed.InvokeAsync();
     }
 
     private async Task BeforeNavigation(LocationChangingContext context)
     {
-        if (Dirty && !await ConfirmDiscard())
+        var saved = FlushDraft();
+        if ((!saved || HasUnsavedPictures) && !await ConfirmLeave())
+        {
             context.PreventNavigation();
+            StateHasChanged();
+        }
     }
 
-    private ValueTask<bool> ConfirmDiscard() => JS.InvokeAsync<bool>("confirm", "Discard unsaved changes to this entry?");
+    private ValueTask<bool> ConfirmLeave() => JS.InvokeAsync<bool>("confirm", "Leave the editor? Changes that have not been saved, including new pictures, may be lost.");
 }

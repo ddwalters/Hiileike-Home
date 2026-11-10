@@ -102,13 +102,12 @@ app.MapPost("/logout", async (HttpContext context) =>
 
 app.MapGet("/lore/pictures/{id:guid}", (Guid id, LoreStore store, HttpContext context) =>
 {
-    var picture = store.FindPicture(id);
-    if (picture is null)
+    if (store.OpenPicture(id) is not { } picture)
         return Results.NotFound();
 
     context.Response.Headers.CacheControl = "private, no-store";
     context.Response.Headers.XContentTypeOptions = "nosniff";
-    return Results.File(store.PicturePath(id), picture.ContentType);
+    return Results.File(picture.Stream, picture.ContentType);
 }).RequireAuthorization();
 
 app.MapRazorComponents<App>()
