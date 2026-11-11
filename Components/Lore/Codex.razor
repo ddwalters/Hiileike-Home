@@ -33,10 +33,15 @@
 
     <div class="workspace">
         <header class="topbar">
-            <div class="crumb"><LoreIcon Name="book" Size="16" /> <a href="/">Hiileike Home</a> <b>/</b> @(EntryId is null ? KindFilter?.Plural() ?? "All entries" : Selected?.Kind.Plural() ?? "Entry")</div>
+            <div class="crumb">
+                <LoreIcon Name="book" Size="16" />
+                <a href="/">Hiileike Home</a>
+                <b>/</b>
+                <span>@(EntryId is null ? KindFilter?.Plural() ?? "All entries" : Selected?.Kind.Plural() ?? "Entry")</span>
+            </div>
             @if (editing is null && !quickCapture)
             {
-                <div class="actions">
+                <div class="actions topbar-actions">
                     <button class="button" @onclick="() => quickCapture = true">Quick capture</button>
                     <button class="button primary" @onclick="NewEntry"><LoreIcon Name="plus" Size="18" /> New entry</button>
                 </div>
@@ -291,10 +296,6 @@
                                 else
                                 {
                                     <button class="button primary" @onclick="NewEntry"><LoreIcon Name="plus" Size="18" /> Create an entry</button>
-                                    @if (entries.Length == 0)
-                                    {
-                                        <button class="button" @onclick="LoadExamples">Load sample entries</button>
-                                    }
                                 }
                             </div>
                         </div>
@@ -423,21 +424,6 @@
         quickCapture = false;
         Refresh();
         Navigation.NavigateTo(EntryUrl(entry.Id));
-    }
-
-    private void LoadExamples()
-    {
-        error = null;
-        try
-        {
-            Store.LoadExamples();
-            Refresh();
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Text.Json.JsonException)
-        {
-            Logger.LogError(ex, "Could not load sample entries.");
-            error = "Sample entries could not be written to the data directory.";
-        }
     }
 
     private void Delete(LoreEntry entry)

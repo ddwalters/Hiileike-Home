@@ -1,23 +1,23 @@
 # Lore storage
 
 Use the existing PostgreSQL server, database `hiileikehome_db`, and schema `lore`.
-The application role owns this schema and needs no superuser privileges.
+The application connects using the shared `hiileike` PostgreSQL login.
 
 ## Server configuration
 
 The existing `Lore__DataDirectory=/lore-data` setting remains the attachment
-directory. Reuse the existing Compose `POSTGRES_PASSWORD` variable. Set the
-`hiileikehome_app` role's password to that value using `\password hiileikehome_app`
-interactively in psql.
+directory. Reuse the existing Compose `POSTGRES_PASSWORD` variable for the
+`hiileike` login.
 
 Add one entry to the existing `blazor-app.environment` list:
 
 ```yaml
+- Lore__Database__Username=${POSTGRES_USER:?Set POSTGRES_USER}
 - Lore__Database__Password=${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}
 ```
 
 The defaults are host `postgresql`, port `5432`, database `hiileikehome_db`, and
-username `hiileikehome_app`. Optional overrides are `Lore__Database__Host`,
+username `hiileike`. Optional overrides are `Lore__Database__Host`,
 `Lore__Database__Port`, `Lore__Database__Name`, and `Lore__Database__Username`.
 Alternatively, supply the full connection string as `ConnectionStrings__Lore`.
 Password values are passed through a connection string builder, so punctuation
@@ -27,6 +27,27 @@ The first database operation applies the embedded, versioned SQL migration.
 It creates only objects inside `lore`. A configured database failure is surfaced
 to the editor. File storage is used when no database setting is supplied, for
 local development. Existing test JSON is not imported automatically.
+
+## Desktop database access
+
+Applications on the Docker network connect using service names and container
+ports. Desktop clients use an SSH tunnel to the server's loopback ports.
+
+| DBeaver setting | Lore |
+| --- | --- |
+| Main host | localhost |
+| Main port | 5434 |
+| Database | hiileikehome_db |
+| Database username | hiileike |
+| SSH host while at home | 192.168.1.9 |
+| SSH port | 22 |
+| SSH username | hiileike |
+
+The main PostgreSQL service publishes `127.0.0.1:5434:5432`. ConceptDb currently
+uses LAN port 5433. A future switch to `127.0.0.1:5433:5432` would give it the
+same SSH access pattern. Port `5432` on the server's LAN address belongs to a
+separate PostgreSQL installation. Access away from home requires a VPN or a
+separately configured remote SSH endpoint.
 
 ## Tables and relationships
 

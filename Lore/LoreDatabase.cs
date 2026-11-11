@@ -24,7 +24,7 @@ internal sealed class LoreDatabase(string connectionString) : IDisposable
             Host = configuration["Lore:Database:Host"] ?? "postgresql",
             Port = configuration.GetValue("Lore:Database:Port", 5432),
             Database = configuration["Lore:Database:Name"] ?? "hiileikehome_db",
-            Username = configuration["Lore:Database:Username"] ?? "hiileikehome_app",
+            Username = configuration["Lore:Database:Username"] ?? "hiileike",
             Password = password,
             GssEncryptionMode = GssEncryptionMode.Disable,
             ApplicationName = "HiileikeHome Lore"

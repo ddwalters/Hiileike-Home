@@ -62,7 +62,8 @@
         min-height: 69px; padding: 12px clamp(20px, 4vw, 58px); border-bottom: 1px solid var(--border);
         display: flex; align-items: center; justify-content: space-between; gap: 12px;
     }
-    .crumb { display: flex; align-items: center; gap: 9px; font-size: .86rem; color: var(--muted); }
+    .crumb { display: flex; flex-wrap: wrap; align-items: center; gap: 9px; font-size: .86rem; color: var(--muted); }
+    .crumb a { white-space: nowrap; }
     .crumb svg { color: var(--accent); }
     .crumb b { color: #677285; font-weight: 500; }
     .content { width: min(100%, 1370px); margin: 0 auto; padding: 33px clamp(20px, 4vw, 58px) 46px; flex: 1; }
@@ -255,6 +256,9 @@
         .content { padding-top: 20px; }
     }
     @media (max-width: 620px) {
+        .topbar { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; padding-block: 16px; }
+        .topbar-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+        .topbar-actions .button { min-height: 44px; width: 100%; }
         .detail-grid { grid-template-columns: minmax(0, 1fr); }
         .hero { min-height: 165px; }
         .hero-emblem { inset-inline-end: 0; opacity: .43; }

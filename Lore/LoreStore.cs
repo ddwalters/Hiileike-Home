@@ -230,19 +230,6 @@ public sealed class LoreStore(IWebHostEnvironment environment, IConfiguration co
         });
     }
 
-    public bool LoadExamples()
-    {
-        return Run(session =>
-        {
-            if (Load(session).Count > 0)
-                return false;
-
-            var entriesById = LoreExamples.Create().ToDictionary(entry => entry.Id);
-            Persist(RecordChanges([], entriesById), session);
-            return true;
-        });
-    }
-
     private Dictionary<Guid, LoreRevision[]> Load(DatabaseSession? session)
     {
         if (session is not null)
