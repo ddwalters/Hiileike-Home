@@ -1,0 +1,11 @@
+[Unit]
+Description=Daily Hiileike Home Lore backup
+
+[Timer]
+OnCalendar=*-*-* 03:00:00 America/New_York
+RandomizedDelaySec=5m
+Persistent=true
+Unit=hiileike-lore-backup.service
+
+[Install]
+WantedBy=timers.target

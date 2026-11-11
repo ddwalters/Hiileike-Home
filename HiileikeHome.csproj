@@ -18,6 +18,10 @@
 
   <ItemGroup>
     <PackageReference Include="Microsoft.AspNetCore.Authentication.OpenIdConnect" Version="10.0.12" />
+    <PackageReference Include="Npgsql" Version="10.0.3" />
   </ItemGroup>
 
+  <ItemGroup>
+    <EmbeddedResource Include="Lore/Database/001_initial.sql" />
+  </ItemGroup>
 </Project>

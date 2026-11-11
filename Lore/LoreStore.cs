@@ -1,8 +1,10 @@
 using System.Text.Json;
+using System.Data.Common;
+using DatabaseSession = HiileikeHome.Lore.LoreDatabase.Session;
 
 namespace HiileikeHome.Lore;
 
-public sealed class LoreStore(IWebHostEnvironment environment, IConfiguration configuration, ILogger<LoreStore> logger)
+public sealed class LoreStore(IWebHostEnvironment environment, IConfiguration configuration, ILogger<LoreStore> logger) : IDisposable
 {
     public const int PictureLimit = 24;
     public const int PictureSize = 8 * 1024 * 1024;
@@ -15,46 +17,62 @@ public sealed class LoreStore(IWebHostEnvironment environment, IConfiguration co
         environment.ContentRootPath);
     private readonly object gate = new();
     private Dictionary<Guid, LoreRevision[]>? history;
+    private readonly LoreDatabase? database = LoreDatabase.Create(configuration);
 
     private string CatalogPath => Path.Combine(root, "entries.json");
-    private string PicturePath(Guid id) => Path.Combine(root, "pictures", id.ToString("N"));
+    private string PicturePath(Picture picture) => Path.Combine(root, "pictures", LoreDatabase.PictureKey(picture));
+    private string ExistingPicturePath(Picture picture)
+    {
+        var path = PicturePath(picture);
+        return File.Exists(path) ? path : Path.Combine(root, "pictures", picture.Id.ToString("N"));
+    }
     private string DraftPath(Guid id) => Path.Combine(root, "drafts", id == Guid.Empty ? "new.json" : $"{id:N}.json");
 
     public LoreDraft? LoadDraft(Guid id)
     {
-        lock (gate)
+        return Run(session =>
         {
-            var draft = ReadDraft(DraftPath(id));
-            return id == Guid.Empty && draft is not null && Load().ContainsKey(draft.Entry.Id) ? null : draft;
-        }
+            return LoadDraft(id, session);
+        });
+    }
+
+    private LoreDraft? LoadDraft(Guid id, DatabaseSession? session)
+    {
+        var draft = session is null ? ReadDraft(DraftPath(id)) : session.LoadDraft(id);
+        return id == Guid.Empty && draft is not null && Load(session).ContainsKey(draft.Entry.Id) ? null : draft;
     }
 
     public bool SaveDraft(Guid id, LoreDraft draft, Guid? expectedStamp)
     {
-        lock (gate)
+        return Run(session =>
         {
             var path = DraftPath(id);
-            var previous = LoadDraft(id);
+            var previous = LoadDraft(id, session);
             if (previous?.Stamp != expectedStamp || (id == Guid.Empty
-                ? Load().ContainsKey(draft.Entry.Id) : !Load().ContainsKey(id)))
+                ? Load(session).ContainsKey(draft.Entry.Id) : !Load(session).ContainsKey(id)))
                 return false;
 
-            WriteJson(path, draft);
+            if (session is null)
+                WriteJson(path, draft);
+            else
+                session.SaveDraft(id, draft);
             return true;
-        }
+        });
     }
 
     public bool ClearDraft(Guid id, Guid stamp)
     {
-        lock (gate)
+        return Run(session =>
         {
+            if (session is not null)
+                return session.ClearDraft(id, stamp);
             var path = DraftPath(id);
             if (ReadDraft(path)?.Stamp != stamp)
                 return false;
 
             File.Delete(path);
             return true;
-        }
+        });
     }
 
     private static LoreDraft? ReadDraft(string path)
@@ -75,26 +93,26 @@ public sealed class LoreStore(IWebHostEnvironment environment, IConfiguration co
 
     public (LoreEntry[] Entries, LoreRevision[] Revisions) Snapshot(Guid? entryId)
     {
-        lock (gate)
+        return Run(session =>
         {
-            var catalog = Load();
+            var catalog = Load(session);
             var revisions = entryId is { } id && catalog.TryGetValue(id, out var found) ? found : [];
             return (catalog.Values.Select(versions => versions[^1].Entry).ToArray(), revisions);
-        }
+        });
     }
 
     public (Stream Stream, string ContentType)? OpenPicture(Guid id)
     {
-        lock (gate)
+        return Run<(Stream Stream, string ContentType)?>(session =>
         {
-            var picture = Load().Values.SelectMany(versions => versions)
+            var picture = Load(session).Values.SelectMany(versions => versions)
                 .SelectMany(version => version.Entry.Pictures).FirstOrDefault(picture => picture.Id == id);
             if (picture is null)
                 return null;
 
             try
             {
-                var stream = File.Open(PicturePath(id), FileMode.Open, FileAccess.Read, FileShare.Read | FileShare.Delete);
+                var stream = File.Open(ExistingPicturePath(picture), FileMode.Open, FileAccess.Read, FileShare.Read | FileShare.Delete);
                 return (stream, picture.ContentType);
             }
             catch (IOException ex) when (ex is FileNotFoundException or DirectoryNotFoundException)
@@ -102,14 +120,14 @@ public sealed class LoreStore(IWebHostEnvironment environment, IConfiguration co
                 logger.LogWarning(ex, "The catalog references a missing lore picture {PictureId}.", id);
                 return null;
             }
-        }
+        });
     }
 
     public LoreEntry Save(LoreEntry draft, IReadOnlyList<PictureUpload> uploads)
     {
-        lock (gate)
+        return Run(session =>
         {
-            var catalog = Load();
+            var catalog = Load(session);
             var current = CurrentEntries(catalog);
             current.TryGetValue(draft.Id, out var original);
             VerifyRevision(original, draft.Revision);
@@ -151,7 +169,7 @@ public sealed class LoreStore(IWebHostEnvironment environment, IConfiguration co
             }
 
             next[saved.Id] = saved;
-            var written = new List<Guid>();
+            var written = new List<Picture>();
             try
             {
                 if (uploads.Count > 0)
@@ -159,34 +177,35 @@ public sealed class LoreStore(IWebHostEnvironment environment, IConfiguration co
 
                 foreach (var upload in uploads)
                 {
-                    using var file = new FileStream(PicturePath(upload.Picture.Id), FileMode.CreateNew);
-                    written.Add(upload.Picture.Id);
+                    using var file = new FileStream(PicturePath(upload.Picture), FileMode.CreateNew);
+                    written.Add(upload.Picture);
                     file.Write(upload.Bytes);
                     file.Flush(flushToDisk: true);
                 }
 
-                Persist(RecordChanges(catalog, next));
+                Persist(RecordChanges(catalog, next), session);
             }
             catch
             {
-                foreach (var id in written)
-                    RemoveFile(PicturePath(id));
+                if (session is null)
+                    foreach (var picture in written)
+                        RemoveFile(PicturePath(picture));
                 throw;
             }
 
             logger.LogInformation("Saved lore entry {EntryId} at revision {Revision}.", saved.Id, saved.Revision);
             return saved;
-        }
+        });
     }
 
     public void Delete(Guid id, int revision)
     {
-        lock (gate)
+        Run<object?>(session =>
         {
-            var catalog = Load();
+            var catalog = Load(session);
             var current = CurrentEntries(catalog);
             if (!current.TryGetValue(id, out var original))
-                return;
+                return null;
 
             VerifyRevision(original, revision);
             var next = new Dictionary<Guid, LoreEntry>(current);
@@ -201,29 +220,33 @@ public sealed class LoreStore(IWebHostEnvironment environment, IConfiguration co
                         Revision = entry.Revision + 1
                     };
 
-            Persist(RecordChanges(catalog, next));
-            RemoveFile(DraftPath(id));
-            foreach (var pictureId in catalog[id].SelectMany(version => version.Entry.Pictures).Select(picture => picture.Id).Distinct())
-                RemoveFile(PicturePath(pictureId));
+            Persist(RecordChanges(catalog, next), session);
+            if (session is null)
+                RemoveFile(DraftPath(id));
+            foreach (var picture in catalog[id].SelectMany(version => version.Entry.Pictures).DistinctBy(picture => picture.Id))
+                RemoveFile(ExistingPicturePath(picture));
             logger.LogInformation("Deleted lore entry {EntryId} with {RevisionCount} revisions.", id, catalog[id].Length);
-        }
+            return null;
+        });
     }
 
     public bool LoadExamples()
     {
-        lock (gate)
+        return Run(session =>
         {
-            if (Load().Count > 0)
+            if (Load(session).Count > 0)
                 return false;
 
             var entriesById = LoreExamples.Create().ToDictionary(entry => entry.Id);
-            Persist(RecordChanges([], entriesById));
+            Persist(RecordChanges([], entriesById), session);
             return true;
-        }
+        });
     }
 
-    private Dictionary<Guid, LoreRevision[]> Load()
+    private Dictionary<Guid, LoreRevision[]> Load(DatabaseSession? session)
     {
+        if (session is not null)
+            return session.Load();
         if (history is not null)
             return history;
         FileStream file;
@@ -284,8 +307,13 @@ public sealed class LoreStore(IWebHostEnvironment environment, IConfiguration co
         return next;
     }
 
-    private void Persist(Dictionary<Guid, LoreRevision[]> next)
+    private void Persist(Dictionary<Guid, LoreRevision[]> next, DatabaseSession? session)
     {
+        if (session is not null)
+        {
+            session.Persist(next);
+            return;
+        }
         WriteJson(CatalogPath, next);
         history = next;
     }
@@ -327,4 +355,23 @@ public sealed class LoreStore(IWebHostEnvironment environment, IConfiguration co
             logger.LogWarning(ex, "Could not clean up lore file {FileName}.", Path.GetFileName(path));
         }
     }
+
+    private T Run<T>(Func<DatabaseSession?, T> action)
+    {
+        lock (gate)
+        {
+            try
+            {
+                using var session = database?.Begin();
+                return action(session);
+            }
+            catch (DbException ex)
+            {
+                logger.LogError(ex, "The Lore database operation failed.");
+                throw new IOException("Lore storage is temporarily unavailable.", ex);
+            }
+        }
+    }
+
+    public void Dispose() => database?.Dispose();
 }
