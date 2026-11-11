@@ -44,6 +44,9 @@ while IFS= read -r -t 60 line <&"$lock_output"; do
         locked=true
         break
     fi
+    if [[ -n "$line" ]]; then
+        printf 'Backup lock command: %s\n' "$line" >&2
+    fi
 done
 if [[ "$locked" != true ]]; then
     printf 'Could not acquire the Lore backup lock. Partial output is at %s\n' "$work" >&2

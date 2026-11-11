@@ -88,6 +88,8 @@ America/New_York each day, with up to five minutes of random delay. The script
 and its companion `prune.py` are installed in `/home/hiileike/homelab/core/lore-backup`.
 Scheduled backups go to `/mnt/storage/backups/hiileikehome/lore`. Its logs are available with
 `journalctl --user -u hiileike-lore-backup.service`.
+The service uses `sg docker` so the job has the account's existing Docker group
+access even when the user manager was started before that membership was added.
 
 After a successful backup, retention uses America/New_York dates and weeks
 starting Monday. It keeps the latest backup for each day of the current week,

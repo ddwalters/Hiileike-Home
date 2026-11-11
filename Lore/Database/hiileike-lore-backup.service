@@ -4,6 +4,6 @@ Description=Back up Hiileike Home Lore database and pictures
 [Service]
 Type=oneshot
 Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin
-ExecStart=/usr/bin/bash /home/hiileike/homelab/core/lore-backup/backup.sh /mnt/storage/backups/hiileikehome/lore
+ExecStart=/usr/bin/sg docker -c "/usr/bin/bash /home/hiileike/homelab/core/lore-backup/backup.sh /mnt/storage/backups/hiileikehome/lore"
 TimeoutStartSec=infinity
 Nice=10
