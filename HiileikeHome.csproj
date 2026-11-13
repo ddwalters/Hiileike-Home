@@ -23,5 +23,6 @@
 
   <ItemGroup>
     <EmbeddedResource Include="Lore/Database/001_initial.sql" />
+    <EmbeddedResource Include="Lore/Database/002_workspace_entry_types.sql" />
   </ItemGroup>
 </Project>

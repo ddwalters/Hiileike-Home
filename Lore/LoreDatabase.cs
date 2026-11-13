@@ -53,18 +53,18 @@ internal sealed class LoreDatabase(string connectionString) : IDisposable
                 command.ExecuteNonQuery();
                 command.CommandText = "SELECT coalesce(max(version), 0) FROM lore.schema_migrations";
                 var version = (int)command.ExecuteScalar()!;
-                if (version == 0)
+                if (version > 2)
+                    throw new IOException("The Lore database schema is newer than this application.");
+
+                string[] scripts = ["001_initial.sql", "002_workspace_entry_types.sql"];
+                foreach (var scriptName in scripts.Skip(version))
                 {
                     using var script = typeof(LoreDatabase).Assembly.GetManifestResourceStream(
-                        "HiileikeHome.Lore.Database.001_initial.sql")
+                        $"HiileikeHome.Lore.Database.{scriptName}")
                         ?? throw new InvalidOperationException("The Lore database migration is missing.");
                     using var reader = new StreamReader(script);
                     command.CommandText = reader.ReadToEnd();
                     command.ExecuteNonQuery();
-                }
-                else if (version != 1)
-                {
-                    throw new IOException("The Lore database schema is newer than this application.");
                 }
                 migration.Commit();
                 initialized = true;

@@ -143,6 +143,9 @@
     .Character { --kind-color: #c0a9ec; }
     .Quest { --kind-color: #f3979e; }
     .Location { --kind-color: #76d0d6; }
+    .Environment { --kind-color: #98c98b; }
+    .Ambiance { --kind-color: #94b9ee; }
+    .Misc { --kind-color: #bac2ce; }
     .kind-label { color: var(--kind-color); font-size: .67rem; font-weight: 750; text-transform: uppercase; letter-spacing: .12em; }
     .pin { color: var(--peach); margin-left: auto; }
     .entry-card h3 { margin-top: 11px; font-size: 1.08rem; line-height: 1.25; letter-spacing: -.012em; overflow-wrap: anywhere; }

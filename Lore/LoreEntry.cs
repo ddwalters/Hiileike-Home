@@ -1,6 +1,6 @@
 namespace HiileikeHome.Lore;
 
-public enum EntryKind { Item, Character, Quest, Location }
+public enum EntryKind { Item, Character, Quest, Location, Environment, Ambiance, Misc }
 public enum EntryStatus { Idea, Planned, InProgress, Implemented }
 
 public sealed record Picture(Guid Id, string Name, string ContentType);
@@ -20,6 +20,13 @@ public sealed record LoreEntry(
 
 public static class LoreLabels
 {
-    public static string Plural(this EntryKind kind) => kind == EntryKind.Location ? "World locations" : $"{kind}s";
+    public static string Plural(this EntryKind kind) => kind switch
+    {
+        EntryKind.Location => "World locations",
+        EntryKind.Environment => "Environment",
+        EntryKind.Ambiance => "Ambiance",
+        EntryKind.Misc => "Misc",
+        _ => $"{kind}s"
+    };
     public static string Label(this EntryStatus status) => status == EntryStatus.InProgress ? "In progress" : status.ToString();
 }

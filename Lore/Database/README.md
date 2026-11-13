@@ -23,7 +23,7 @@ Alternatively, supply the full connection string as `ConnectionStrings__Lore`.
 Password values are passed through a connection string builder, so punctuation
 in a password does not become connection string syntax.
 
-The first database operation applies the embedded, versioned SQL migration.
+The first database operation applies any pending embedded, versioned SQL migrations.
 It creates only objects inside `lore`. A configured database failure is surfaced
 to the editor. File storage is used when no database setting is supplied, for
 local development. Existing test JSON is not imported automatically.
@@ -65,7 +65,8 @@ erDiagram
 ```
 
 - `entries` holds the current searchable fields and revision number.
-  Kinds are Item 0, Character 1, Quest 2, and Location 3. Statuses are Idea 0,
+  Kinds are Item 0, Character 1, Quest 2, Location 3, Environment 4,
+  Ambiance 5, and Misc 6. Statuses are Idea 0,
   Planned 1, In progress 2, and Implemented 3.
 - `entry_links` stores each reciprocal connection once, with the smaller UUID first.
 - `tags` has a case-insensitive unique name. `entry_tags` preserves display order.
