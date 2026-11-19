@@ -1,0 +1,38 @@
+@inject PlannerStore Store
+@inject AuthenticationStateProvider Authentication
+@inject ILogger<LoreTaskLinks> Logger
+
+@if (tasks.Length > 0)
+{
+    <section class="panel note-panel">
+        <h2><LoreIcon Name="link" /> Related tasks <small>@tasks.Length</small></h2>
+        @foreach (var task in tasks)
+        {
+            <a class="related" href="@($"/planner/tasks/{task.Id}")">
+                <span><strong>@task.Title</strong><small>@task.Status.Label()</small></span>
+                <LoreIcon Name="arrow" Size="16" />
+            </a>
+        }
+    </section>
+}
+
+@code {
+    [Parameter, EditorRequired] public Guid EntryId { get; set; }
+    private PlannerTask[] tasks = [];
+
+    protected override async Task OnParametersSetAsync()
+    {
+        try
+        {
+            var user = (await Authentication.GetAuthenticationStateAsync()).User;
+            var workspace = await Store.ReadAsync(user);
+            tasks = workspace.Tasks.Where(task => task.Status != PlannerStatus.Replaced && task.LoreIds.Contains(EntryId))
+                .OrderByDescending(task => task.IsOpen).ThenBy(task => task.Title).ToArray();
+        }
+        catch (Exception exception)
+        {
+            tasks = [];
+            Logger.LogDebug(exception, "Planner backlinks are unavailable");
+        }
+    }
+}

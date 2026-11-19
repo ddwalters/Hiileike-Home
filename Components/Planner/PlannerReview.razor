@@ -1,0 +1,204 @@
+@{
+    var currentWeek = PlannerCalendar.WeekOf(Today);
+    var end = week.AddDays(6);
+    var completions = Workspace.Completions.Where(item => item.Day >= week && item.Day <= end)
+        .OrderByDescending(item => item.Day).DistinctBy(item => item.TaskId).ToArray();
+    var pending = Workspace.Tasks.Where(task => task.IsOpen && task.Week == week)
+        .OrderBy(task => task.Priority == 0 ? 4 : task.Priority).ThenBy(task => task.Due ?? DateOnly.MaxValue).ToArray();
+    var decisions = Workspace.Decisions.Where(item => item.Week == week).ToArray();
+    var checkpoints = Workspace.Checkpoints.Where(item => item.Week == week).ToArray();
+    var weeks = AvailableWeeks(currentWeek);
+}
+
+<div class="planner-heading">
+    <div><h1>Weekly review</h1><p>@PlannerCalendar.Range(week)</p></div>
+    <label class="planner-compact-field">Review week
+        <select value="@WeekValue(week)" @onchange="ChooseWeek">
+            @foreach (var available in weeks)
+            {
+                <option value="@WeekValue(available)">@PlannerCalendar.Range(available)@(available == currentWeek ? " · This week" : "")</option>
+            }
+        </select>
+    </label>
+</div>
+
+<div class="planner-dashboard-grid">
+    <section class="planner-panel">
+        <div class="planner-section-heading"><h2>Unfinished work</h2><span class="planner-muted">@pending.Length</span></div>
+        @if (pending.Length == 0)
+        {
+            <p class="planner-empty">No unfinished tasks scheduled for this week.</p>
+        }
+        @foreach (var task in pending)
+        {
+            <div class="planner-review-task" @key="task.Id">
+                <PlannerTaskRow Item="task" Workspace="Workspace" />
+                @if (selectedTask == task.Id)
+                {
+                    <form class="planner-form planner-inline-form" aria-label="@($"Review {task.Title}")"
+                          @onsubmit="() => ApplyReview(task)" @onsubmit:preventDefault>
+                        <label>Decision
+                            <select @bind="action">
+                                <option value="@ReviewAction.Continue">Continue next week</option>
+                                <option value="@ReviewAction.Defer">Defer</option>
+                                <option value="@ReviewAction.BreakDown">Break down</option>
+                            </select>
+                        </label>
+                        @switch (action)
+                        {
+                            case ReviewAction.Continue:
+                                <p class="planner-muted">Move the task to the week of @LaterWeek().ToString("MMM d"). Its due date stays the same.</p>
+                                break;
+                            case ReviewAction.Defer:
+                                <label>Later week
+                                    <input type="date" min="@WeekValue(LaterWeek())" @bind="deferUntil" />
+                                </label>
+                                <p class="planner-muted">Leave the date blank to return this task to the backlog.</p>
+                                break;
+                            case ReviewAction.BreakDown:
+                                <label>Smaller tasks <textarea maxlength="2850" rows="4" required placeholder="One task per line" @bind="steps"></textarea></label>
+                                <p class="planner-muted">Schedule the new tasks for the week of @LaterWeek().ToString("MMM d").</p>
+                                break;
+                        }
+                        <label>Review note <textarea maxlength="2000" rows="2" @bind="note"></textarea></label>
+                        <div class="planner-actions">
+                            <button type="submit" class="planner-button primary" disabled="@Busy">Save decision</button>
+                            <button type="button" class="planner-button" @onclick="Reset">Cancel</button>
+                        </div>
+                    </form>
+                }
+                else
+                {
+                    <button class="planner-button small" type="button" aria-label="@($"Review {task.Title}")"
+                            @onclick="() => StartReview(task.Id)">Review</button>
+                }
+            </div>
+        }
+    </section>
+
+    <section class="planner-panel">
+        <div class="planner-section-heading"><h2>Completed</h2><span class="planner-muted">@completions.Length</span></div>
+        @if (completions.Length == 0)
+        {
+            <p class="planner-empty">No tasks completed during this week.</p>
+        }
+        @foreach (var item in completions)
+        {
+            <a class="planner-review-entry" href="@($"/planner/tasks/{item.TaskId}")">
+                <LoreIcon Name="check" Size="18" />
+                <strong>@item.Title</strong>
+                <time datetime="@WeekValue(item.Day)">@item.Day.ToString("MMM d")</time>
+            </a>
+        }
+        @if (checkpoints.Length > 0)
+        {
+            <div class="planner-section-heading planner-review-checkpoints"><h2>Numeric checkpoints</h2></div>
+            @foreach (var checkpoint in checkpoints)
+            {
+                var project = Workspace.Project(checkpoint.ProjectId)!;
+                var value = Workspace.ProgressAt(project.Id, end < Today ? end : Today);
+                <a class="planner-project-meter" href="@($"/planner/projects/{project.Id}")">
+                    <span><strong>@project.Name</strong><small class="@(value >= checkpoint.Target ? "goal-met" : "planner-muted")">
+                        @(value >= checkpoint.Target ? "Reached" : week < currentWeek ? "Missed" : "Open")
+                    </small></span>
+                    <PlannerProgress Progress="@(new ProjectProgress(value, checkpoint.Target, checkpoint.Unit))" Label="@project.Name" />
+                </a>
+            }
+        }
+    </section>
+</div>
+
+@if (decisions.Length > 0)
+{
+    <section class="planner-panel planner-roadmap">
+        <div class="planner-section-heading"><h2>Review decisions</h2></div>
+        @foreach (var item in decisions)
+        {
+            <div class="planner-decision">
+                <div class="planner-section-heading">
+                    <h3><a href="@($"/planner/tasks/{item.TaskId}")">@item.Title</a></h3>
+                    <small class="planner-muted">@item.Action.Label() · @(item.Destination is { } date ? $"Week of {date:MMM d}" : "Backlog")</small>
+                </div>
+                @if (!string.IsNullOrWhiteSpace(item.Note))
+                {
+                    <p class="planner-notes">@item.Note</p>
+                }
+                @if (item.Steps.Length > 0)
+                {
+                    <ul>
+                        @foreach (var step in item.Steps)
+                        {
+                            <li>@step</li>
+                        }
+                    </ul>
+                }
+            </div>
+        }
+    </section>
+}
+
+@code {
+    [Parameter, EditorRequired] public PlannerWorkspace Workspace { get; set; } = default!;
+    [Parameter, EditorRequired] public DateOnly Today { get; set; }
+    [Parameter, EditorRequired] public Func<Action<PlannerWorkspace>, string, Task<PlannerWorkspace?>> Save { get; set; } = default!;
+    [Parameter] public bool Busy { get; set; }
+
+    private DateOnly week;
+    private Guid? selectedTask;
+    private ReviewAction action;
+    private DateOnly? deferUntil;
+    private string steps = "", note = "";
+
+    protected override void OnInitialized()
+    {
+        var current = PlannerCalendar.WeekOf(Today);
+        week = Workspace.Tasks.Where(task => task.IsOpen && task.Week < current).Max(task => task.Week) ?? current;
+    }
+
+    private DateOnly[] AvailableWeeks(DateOnly current) => Workspace.Tasks.Where(task => task.Week <= current)
+        .Select(task => task.Week!.Value)
+        .Concat(Workspace.Completions.Select(item => PlannerCalendar.WeekOf(item.Day)))
+        .Concat(Workspace.Decisions.Select(item => item.Week))
+        .Concat(Workspace.Checkpoints.Select(item => item.Week))
+        .Concat([current, current.AddDays(-7), week])
+        .Where(item => item <= current).Distinct().OrderDescending().ToArray();
+
+    private static string WeekValue(DateOnly day) => day.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture);
+
+    private void ChooseWeek(ChangeEventArgs args)
+    {
+        if (DateOnly.TryParseExact(args.Value?.ToString(), "yyyy-MM-dd", out var date))
+        {
+            week = date;
+            Reset();
+        }
+    }
+
+    private DateOnly LaterWeek()
+    {
+        var current = PlannerCalendar.WeekOf(Today);
+        var next = week.AddDays(7);
+        return next < current ? current : next;
+    }
+
+    private void StartReview(Guid id)
+    {
+        Reset();
+        selectedTask = id;
+    }
+
+    private void Reset()
+    {
+        selectedTask = null;
+        action = ReviewAction.Continue;
+        deferUntil = null;
+        steps = note = "";
+    }
+
+    private async Task ApplyReview(PlannerTask task)
+    {
+        var destination = deferUntil is { } date ? PlannerCalendar.WeekOf(date) : (DateOnly?)null;
+        if (await Save(state => state.Review(task, week, action, destination, steps, note, Today), "Review decision saved.") is not null)
+            Reset();
+    }
+}

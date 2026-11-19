@@ -1,0 +1,145 @@
+@{
+    var week = PlannerCalendar.WeekOf(Today);
+    var end = week.AddDays(6);
+    var tasks = Workspace.Tasks.Where(task => showHidden || !Workspace.IsDashboardHidden(task)).ToArray();
+    var milestones = Workspace.Milestones.Where(item => showHidden || !Workspace.IsDashboardHidden(item)).ToArray();
+    var visibleTaskIds = tasks.Select(task => task.Id).ToHashSet();
+    var planned = tasks.Where(task => task.IsOpen && task.Week == week).ToArray();
+    var priorities = planned.Where(task => task.Priority > 0).OrderBy(task => task.Priority).ToArray();
+    var active = tasks.Where(task => task.IsOpen && (task.Week == week || task.Status == PlannerStatus.InProgress))
+        .OrderBy(task => task.Due ?? DateOnly.MaxValue).ThenBy(task => task.Title).ToArray();
+    var deadlines = tasks.Where(task => task.IsOpen && task.Due <= end)
+        .Select(task => new Deadline(task.Title, $"/planner/tasks/{task.Id}", task.Due!.Value, Workspace.Project(task.ProjectId)?.Name ?? "Task"))
+        .Concat(milestones.Where(item => !item.Done && item.Due <= end)
+            .Select(item => new Deadline(item.Title, $"/planner/projects/{item.ProjectId}", item.Due!.Value, "Milestone")))
+        .OrderBy(item => item.Day).ThenBy(item => item.Title).ToArray();
+    var completions = Workspace.Completions.Where(item => item.Day >= week && item.Day <= end && visibleTaskIds.Contains(item.TaskId))
+        .DistinctBy(item => item.TaskId).Count();
+    var overdue = deadlines.Count(item => item.Day < Today);
+    var carryover = tasks.Count(task => task.IsOpen && task.Week < week);
+    var checkpoints = Workspace.Checkpoints.Where(item => item.Week == week)
+        .Where(item => Workspace.Project(item.ProjectId)?.Measure == ProgressMeasure.Numeric).ToArray();
+    var focusedIds = active.Select(task => task.ProjectId)
+        .Concat(tasks.Where(task => task.IsOpen && task.Due <= end).Select(task => task.ProjectId))
+        .Concat(milestones.Where(item => !item.Done && item.Due >= week && item.Due <= end).Select(item => (Guid?)item.ProjectId))
+        .Concat(checkpoints.Select(item => (Guid?)item.ProjectId)).ToHashSet();
+    var projects = Workspace.Projects.Where(project => showHidden || !Workspace.IsDashboardHidden(project.Id))
+        .OrderByDescending(project => focusedIds.Contains(project.Id)).ThenBy(project => project.Name).ToArray();
+    var hasHidden = Workspace.Projects.Any(project => project.HiddenFromDashboard)
+        || Workspace.Tasks.Any(task => task.HiddenFromDashboard) || Workspace.Milestones.Any(item => item.HiddenFromDashboard);
+}
+
+<header class="planner-hero">
+    <div>
+        <p class="planner-week">@PlannerCalendar.Range(week)</p>
+        <h1>This week</h1>
+        <div class="planner-hero-actions">
+            <a class="planner-button primary" href="/planner/board">Open board <LoreIcon Name="arrow" Size="16" /></a>
+            <a class="planner-button" href="/planner/review">Weekly review</a>
+        </div>
+    </div>
+    <dl class="planner-stats">
+        <div><dt>Planned</dt><dd>@planned.Length</dd></div>
+        <div><dt>Completed</dt><dd>@completions</dd></div>
+        <div><dt>Overdue</dt><dd class="@(overdue > 0 ? "overdue" : null)">@overdue</dd></div>
+    </dl>
+</header>
+
+@if (hasHidden)
+{
+    <div class="planner-dashboard-settings">
+        <label class="planner-checkbox"><input type="checkbox" @bind="showHidden" /> Show hidden items</label>
+    </div>
+}
+
+@if (carryover > 0)
+{
+    <a class="planner-notice planner-carryover" href="/planner/review">
+        <span>@carryover unfinished @(carryover == 1 ? "task needs" : "tasks need") review from earlier weeks.</span>
+        <LoreIcon Name="arrow" Size="16" />
+    </a>
+}
+
+<div class="planner-dashboard-grid">
+    <section class="planner-panel">
+        <div class="planner-section-heading"><h2>Top priorities</h2><a href="/planner/board">View board</a></div>
+        @if (priorities.Length == 0)
+        {
+            <p class="planner-empty">Schedule a task for this week and give it a priority from 1 to 3.</p>
+        }
+        @foreach (var task in priorities)
+        {
+            <div class="planner-ranked">
+                <span aria-label="@($"Priority {task.Priority}")">@task.Priority</span>
+                <PlannerTaskRow Item="task" Workspace="Workspace" />
+            </div>
+        }
+    </section>
+
+    <section class="planner-panel">
+        <div class="planner-section-heading"><h2>Deadlines</h2><span class="planner-muted">Through @end.ToString("MMM d")</span></div>
+        @if (deadlines.Length == 0)
+        {
+            <p class="planner-empty">No open deadlines through Sunday.</p>
+        }
+        @foreach (var deadline in deadlines)
+        {
+            <a class="planner-deadline" href="@deadline.Url">
+                <time class="@(deadline.Day < Today ? "overdue" : null)" datetime="@deadline.Day.ToString("yyyy-MM-dd")">
+                    <strong>@deadline.Day.ToString("MMM d")</strong>
+                    @if (deadline.Day < Today)
+                    {
+                        <small>Overdue</small>
+                    }
+                    else if (deadline.Day == Today)
+                    {
+                        <small>Today</small>
+                    }
+                </time>
+                <span><strong>@deadline.Title</strong><small>@deadline.Context</small></span>
+                <LoreIcon Name="arrow" Size="15" />
+            </a>
+        }
+    </section>
+
+    <section class="planner-panel">
+        <div class="planner-section-heading"><h2>Active work</h2><a class="planner-text-link" href="/planner/new-task">New task</a></div>
+        @if (active.Length == 0)
+        {
+            <p class="planner-empty">Tasks scheduled for this week or in progress will appear here.</p>
+        }
+        @foreach (var task in active)
+        {
+            <PlannerTaskRow Item="task" Workspace="Workspace" />
+        }
+    </section>
+
+    <section class="planner-panel">
+        <div class="planner-section-heading"><h2>Project progress</h2><a href="/planner/projects">All projects</a></div>
+        @if (projects.Length == 0)
+        {
+            <p class="planner-empty">@(hasHidden ? "No projects visible on the dashboard." : "Create a project to track tasks, milestones, or a numeric goal.")</p>
+        }
+        @foreach (var project in projects)
+        {
+            <a class="planner-project-meter" href="@($"/planner/projects/{project.Id}")">
+                <span><strong>@project.Name</strong><LoreIcon Name="arrow" Size="15" /></span>
+                <PlannerProgress Progress="@Workspace.Progress(project)" Label="@project.Name" />
+                @if (checkpoints.FirstOrDefault(item => item.ProjectId == project.Id) is { } checkpoint)
+                {
+                    <small class="@(project.Value >= checkpoint.Target ? "goal-met" : "planner-muted")">
+                        This week: @project.Value.ToString("N0") / @checkpoint.Target.ToString("N0") @project.Unit
+                    </small>
+                }
+            </a>
+        }
+    </section>
+</div>
+
+@code {
+    private sealed record Deadline(string Title, string Url, DateOnly Day, string Context);
+    private bool showHidden;
+
+    [Parameter, EditorRequired] public PlannerWorkspace Workspace { get; set; } = default!;
+    [Parameter, EditorRequired] public DateOnly Today { get; set; }
+}

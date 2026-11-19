@@ -26,13 +26,12 @@ else
 <form class="editor" @onsubmit="Save" @onsubmit:preventDefault>
     <div class="page-title">
         <div>
-            <p class="eyebrow">WORLD CODEX</p>
-            <h1>@(Entry.Revision == 0 ? "New entry" : "Edit entry")</h1>
-            <p class="muted">Capture the idea, its connections, and how it works in your game.</p>
+            <p class="eyebrow">@ProjectName</p>
+            <h1>@(Entry.Revision == 0 ? "New note" : "Edit note")</h1>
         </div>
         <div class="actions">
             <button type="button" class="button" @onclick="Close" disabled="@(reading || linkedCapture)">Close editor</button>
-            <button type="submit" class="button primary" disabled="@(reading || linkedCapture)"><LoreIcon Name="check" Size="18" /> Save entry</button>
+            <button type="submit" class="button primary" disabled="@(reading || linkedCapture)"><LoreIcon Name="check" Size="18" /> Save note</button>
         </div>
     </div>
     @if (error is not null)
@@ -53,11 +52,12 @@ else
         <div class="stack">
             <section class="panel edit-section">
                 <div class="field-grid">
-                    <label>Type
-                        <select @bind="Kind">
-                            @foreach (var kind in Enum.GetValues<EntryKind>())
+                    <label>Category
+                        <select @bind="CategoryId">
+                            <option value="">Uncategorized</option>
+                            @foreach (var category in Categories)
                             {
-                                <option value="@kind">@kind</option>
+                                <option value="@category.Id">@category.Name</option>
                             }
                         </select>
                     </label>
@@ -74,11 +74,11 @@ else
                     <input @bind="Title" @bind:event="oninput" required maxlength="120" placeholder="Name this entry" />
                 </label>
                 <label>Summary
-                    <textarea @bind="Summary" @bind:event="oninput" rows="2" maxlength="320" placeholder="A short description for the codex"></textarea>
+                    <textarea @bind="Summary" @bind:event="oninput" rows="2" maxlength="320" placeholder="A short description for the notes list"></textarea>
                 </label>
             </section>
             <div class="panel">
-                <NoteEditor Id="lore-notes" Title="Lore & ideas" Placeholder="What should you remember about this entry?" @bind-Value="Notes" />
+                <NoteEditor Id="lore-notes" Title="Notes & ideas" Placeholder="What should you remember about this note?" @bind-Value="Notes" />
                 <NoteEditor Id="implementation-notes" Title="Implementation notes" Placeholder="How does it work in-game? What’s left to build?" @bind-Value="Implementation" />
             </div>
         </div>
@@ -99,7 +99,7 @@ else
                         }
                     </div>
                 }
-                <label class="checkbox"><input type="checkbox" @bind="Pinned" /> Pin to the top of the codex</label>
+                <label class="checkbox"><input type="checkbox" @bind="Pinned" /> Pin to the top of the notes list</label>
             </section>
             <section class="panel edit-section">
                 <h2><LoreIcon Name="link" /> Linked entries</h2>
@@ -120,7 +120,7 @@ else
                         {
                             <label class="checkbox link-option" @key="entry.Id">
                                 <input type="checkbox" checked="@draft.Links.Contains(entry.Id)" @onchange="() => ToggleLink(entry.Id)" />
-                                <span>@entry.Title <small>@entry.Kind</small></span>
+                                <span>@entry.Title <small>@entry.CategoryLabel</small></span>
                             </label>
                         }
                         @if (!FilteredCandidates.Any())
@@ -179,13 +179,16 @@ else
 </form>
     @if (linkedCapture)
     {
-        <QuickEntry InitialKind="EntryKind.Item" Heading="Create linked entry" SaveLabel="Create and select link"
+        <QuickEntry ProjectId="Entry.CatalogId" Scope="Scope" Categories="Categories" Heading="Create linked note" SaveLabel="Create and select link"
                     Saved="LinkCreated" Cancelled="() => linkedCapture = false" />
     }
 }
 
 @code {
     [Parameter, EditorRequired] public LoreEntry Entry { get; set; } = default!;
+    [Parameter, EditorRequired] public IReadOnlySet<Guid> Scope { get; set; } = new HashSet<Guid>();
+    [Parameter, EditorRequired] public NoteCategory[] Categories { get; set; } = [];
+    [Parameter] public string? ProjectName { get; set; }
     [Parameter, EditorRequired] public IReadOnlyList<LoreEntry> Candidates { get; set; } = [];
     [Parameter] public IEnumerable<string> KnownTags { get; set; } = [];
     [Parameter] public EventCallback<LoreEntry> Saved { get; set; }
@@ -218,7 +221,11 @@ else
     private string Summary { get => draft.Summary; set => UpdateDraft(draft with { Summary = value }); }
     private string Notes { get => draft.Notes; set => UpdateDraft(draft with { Notes = value }); }
     private string Implementation { get => draft.Implementation; set => UpdateDraft(draft with { Implementation = value }); }
-    private EntryKind Kind { get => draft.Kind; set => UpdateDraft(draft with { Kind = value }); }
+    private Guid? CategoryId
+    {
+        get => draft.EffectiveCategoryId;
+        set => UpdateDraft(draft with { CategoryId = value, Kind = null, CategoryName = null });
+    }
     private EntryStatus Status { get => draft.Status; set => UpdateDraft(draft with { Status = value }); }
     private bool Pinned { get => draft.Pinned; set => UpdateDraft(draft with { Pinned = value }); }
     private string TagsText
@@ -235,7 +242,7 @@ else
 
     private IEnumerable<LoreEntry> FilteredCandidates => Candidates
         .Where(entry => entry.Title.Contains(linkSearch.Trim(), StringComparison.OrdinalIgnoreCase)
-            || entry.Kind.ToString().Contains(linkSearch.Trim(), StringComparison.OrdinalIgnoreCase))
+            || entry.CategoryLabel.Contains(linkSearch.Trim(), StringComparison.OrdinalIgnoreCase))
         .OrderByDescending(entry => draft.Links.Contains(entry.Id))
         .ThenBy(entry => entry.Title, StringComparer.OrdinalIgnoreCase);
 
@@ -268,7 +275,7 @@ else
         tags = originalTags = string.Join(", ", Entry.Tags);
         try
         {
-            var stored = Store.LoadDraft(DraftSlot);
+            var stored = Store.LoadDraft(Entry.CatalogId, DraftSlot, Scope);
             if (stored is null)
                 return;
 
@@ -369,7 +376,7 @@ else
         try
         {
             var stamp = Guid.NewGuid();
-            if (!Store.SaveDraft(DraftSlot, new LoreDraft(stamp, draft, tags), draftStamp))
+            if (!Store.SaveDraft(DraftSlot, new LoreDraft(stamp, draft, tags), draftStamp, Scope))
             {
                 draftProblem = "Another editor changed this draft. You can still save the entry if its revision is current.";
                 return false;
@@ -482,7 +489,7 @@ else
         {
             var normalizedTags = tags.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)
                 .Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
-            saved = Store.Save(draft with { Tags = normalizedTags, Summary = draft.Summary.Trim() }, uploads);
+            saved = Store.Save(draft with { Tags = normalizedTags, Summary = draft.Summary.Trim() }, uploads, Scope);
         }
         catch (InvalidOperationException ex)
         {
@@ -510,7 +517,7 @@ else
 
         try
         {
-            Store.ClearDraft(DraftSlot, stamp);
+            Store.ClearDraft(Entry.CatalogId, DraftSlot, stamp, Scope);
             draftStamp = null;
             return true;
         }

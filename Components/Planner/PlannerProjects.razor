@@ -1,0 +1,277 @@
+@inject NavigationManager Navigation
+
+@if (projectDraft is { } editing)
+{
+    <div class="planner-heading">
+        <div><h1>@(editing.Revision == 0 ? (editing.ParentId is null ? "New project" : "New subproject") : "Project settings")</h1></div>
+    </div>
+    <PlannerProjectEditor @key="editing.Id" Item="editing" Workspace="Workspace" Busy="Busy"
+                          Submit="SaveProject" Cancel="() => projectDraft = null" />
+}
+else if (ProjectId is null)
+{
+    <div class="planner-heading">
+        <div><h1>Projects</h1></div>
+        <button class="planner-button primary" type="button" @onclick="() => NewProject(null)">
+            <LoreIcon Name="plus" Size="17" /> New project
+        </button>
+    </div>
+    <section class="planner-panel planner-project-list">
+        @if (Workspace.Projects.Count == 0)
+        {
+            <p class="planner-empty">Create your first project to start a roadmap.</p>
+        }
+        @foreach (var (project, depth) in Workspace.ProjectTree())
+        {
+            <a class="planner-project-meter planner-project-list-item" href="@ProjectUrl(project.Id)"
+               style="@($"--project-depth: {Math.Min(depth, 5)}")">
+                <span>
+                    <strong>@project.Name</strong>
+                    @if (Workspace.IsDashboardHidden(project.Id))
+                    {
+                        <small class="planner-muted">Hidden on dashboard</small>
+                    }
+                    <LoreIcon Name="arrow" Size="15" />
+                </span>
+                <PlannerProgress Progress="@Workspace.Progress(project)" Label="@project.Name" />
+            </a>
+        }
+    </section>
+}
+else if (Workspace.Project(ProjectId) is not { } project)
+{
+    <div class="planner-heading"><h1>Project unavailable</h1></div>
+    <a class="planner-button" href="/planner/projects">All projects</a>
+}
+else
+{
+    var progress = Workspace.Progress(project);
+    var children = Workspace.Children(project.Id).ToArray();
+    var milestones = Workspace.Milestones.Where(item => item.ProjectId == project.Id)
+        .OrderBy(item => item.Due ?? DateOnly.MaxValue).ToArray();
+    var tasks = Workspace.Tasks.Where(task => task.ProjectId == project.Id
+        && task.Status is not (PlannerStatus.Replaced or PlannerStatus.Archived)).ToArray();
+    var week = PlannerCalendar.WeekOf(Today);
+    var checkpoint = Workspace.Checkpoints.FirstOrDefault(item => item.ProjectId == project.Id && item.Week == week);
+
+    <div class="planner-heading">
+        <div>
+            <nav class="planner-breadcrumb" aria-label="Project path">
+                <a href="/planner/projects">Projects</a>
+                @foreach (var parent in Workspace.Ancestors(project.ParentId).Reverse())
+                {
+                    <span aria-hidden="true">/</span><a href="@ProjectUrl(parent.Id)">@parent.Name</a>
+                }
+            </nav>
+            <h1>@project.Name</h1>
+        </div>
+        <div class="planner-actions">
+            <a href="@($"/project-notes/{project.Id}")" class="planner-button">
+                <LoreIcon Name="book" Size="17" /> Project Notes
+            </a>
+            <button type="button" class="planner-button" @onclick="() => projectDraft = project">Project settings</button>
+            <a href="@($"/planner/new-task?project={project.Id}")" class="planner-button primary">
+                <LoreIcon Name="plus" Size="17" /> New task
+            </a>
+        </div>
+    </div>
+
+    <div class="planner-dashboard-grid">
+        <section class="planner-panel">
+            <div class="planner-section-heading">
+                <h2>Progress</h2>
+                @if (Workspace.IsDashboardHidden(project.Id))
+                {
+                    <small class="planner-muted">Hidden on dashboard</small>
+                }
+            </div>
+            <PlannerProgress Progress="progress" Label="@project.Name" />
+            @if (!string.IsNullOrWhiteSpace(project.Notes))
+            {
+                <p class="planner-notes">@project.Notes</p>
+            }
+            @if (project.Measure == ProgressMeasure.Numeric)
+            {
+                <form class="planner-form planner-progress-form" @onsubmit="() => LogProgress(project)" @onsubmit:preventDefault>
+                    <label>Current @project.Unit
+                        <input type="number" min="0" required value="@(progressValue ?? project.Value)" @onchange="ReadProgress" />
+                    </label>
+                    <button type="submit" class="planner-button" disabled="@Busy">Update progress</button>
+                </form>
+                <form class="planner-form planner-progress-form" @onsubmit="() => SaveCheckpoint(project, week)" @onsubmit:preventDefault>
+                    <label>Target @project.Unit this week
+                        <input type="number" min="1" value="@(checkpointEdited ? checkpointValue : checkpoint?.Target)"
+                               @onchange="ReadCheckpoint" placeholder="No checkpoint" />
+                    </label>
+                    <button type="submit" class="planner-button" disabled="@Busy">Save checkpoint</button>
+                </form>
+            }
+        </section>
+
+        <section class="planner-panel">
+            <div class="planner-section-heading">
+                <h2>Subprojects</h2>
+                <button type="button" class="planner-button small" @onclick="() => NewProject(project.Id)">
+                    <LoreIcon Name="plus" Size="15" /> Add subproject
+                </button>
+            </div>
+            @if (children.Length == 0)
+            {
+                <p class="planner-empty">No subprojects yet.</p>
+            }
+            @foreach (var child in children)
+            {
+                <a class="planner-project-meter" href="@ProjectUrl(child.Id)">
+                    <span><strong>@child.Name</strong><LoreIcon Name="arrow" Size="15" /></span>
+                    <PlannerProgress Progress="@Workspace.Progress(child)" Label="@child.Name" />
+                </a>
+            }
+        </section>
+    </div>
+
+    <section class="planner-panel planner-roadmap">
+        <div class="planner-section-heading">
+            <h2>Roadmap</h2>
+            @if (milestoneDraft is null)
+            {
+                <button type="button" class="planner-button small" @onclick="() => NewMilestone(project.Id)">
+                    <LoreIcon Name="plus" Size="15" /> Add milestone
+                </button>
+            }
+        </div>
+        @if (milestoneDraft is { } edit)
+        {
+            <form class="planner-form planner-inline-form" aria-label="Milestone details"
+                  @onsubmit="() => SaveMilestone(edit)" @onsubmit:preventDefault>
+                <label>Milestone title <input required maxlength="140" @bind="milestoneTitle" /></label>
+                <label>Target date <input type="date" @bind="milestoneDue" /></label>
+                <label class="planner-checkbox"><input type="checkbox" @bind="milestoneHidden" /> Hide this milestone from the dashboard</label>
+                <div class="planner-actions">
+                    <button type="submit" class="planner-button primary" disabled="@Busy">Save milestone</button>
+                    <button type="button" class="planner-button" @onclick="() => milestoneDraft = null">Cancel</button>
+                </div>
+            </form>
+        }
+        @if (milestones.Length == 0 && milestoneDraft is null)
+        {
+            <p class="planner-empty">Add a milestone to give this project a target date and group its tasks.</p>
+        }
+        @foreach (var milestone in milestones)
+        {
+            <article class="planner-milestone" @key="milestone.Id">
+                <div class="planner-section-heading">
+                    <div>
+                        <h3>@milestone.Title</h3>
+                        <p class="planner-muted">
+                            @(milestone.Done ? "Complete" : "Open")
+                            @if (milestone.Due is { } day)
+                            {
+                                <span> · Due @day.ToString("MMM d, yyyy")</span>
+                            }
+                            @if (Workspace.IsDashboardHidden(milestone))
+                            {
+                                <span> · Hidden on dashboard</span>
+                            }
+                        </p>
+                    </div>
+                    <div class="planner-actions">
+                        <a class="planner-button small" href="@($"/planner/new-task?project={project.Id}&milestone={milestone.Id}")">Add task</a>
+                        <button type="button" class="planner-button small" aria-label="@($"Edit {milestone.Title}")"
+                                @onclick="() => EditMilestone(milestone)">Edit</button>
+                        <button type="button" class="planner-button small" disabled="@Busy" @onclick="() => ToggleMilestone(milestone)">
+                            @(milestone.Done ? "Reopen milestone" : "Complete milestone")
+                        </button>
+                    </div>
+                </div>
+                @foreach (var task in tasks.Where(task => task.MilestoneId == milestone.Id).OrderBy(task => task.Due ?? DateOnly.MaxValue))
+                {
+                    <PlannerTaskRow @key="task.Id" Item="task" Workspace="Workspace" />
+                }
+            </article>
+        }
+    </section>
+
+    <section class="planner-panel planner-roadmap">
+        <div class="planner-section-heading"><h2>Tasks without a milestone</h2></div>
+        @if (!tasks.Any(task => task.MilestoneId is null))
+        {
+            <p class="planner-empty">No standalone tasks.</p>
+        }
+        @foreach (var task in tasks.Where(task => task.MilestoneId is null).OrderBy(task => task.Due ?? DateOnly.MaxValue))
+        {
+            <PlannerTaskRow @key="task.Id" Item="task" Workspace="Workspace" />
+        }
+    </section>
+}
+
+@code {
+    [Parameter] public Guid? ProjectId { get; set; }
+    [Parameter, EditorRequired] public PlannerWorkspace Workspace { get; set; } = default!;
+    [Parameter, EditorRequired] public DateOnly Today { get; set; }
+    [Parameter, EditorRequired] public Func<Action<PlannerWorkspace>, string, Task<PlannerWorkspace?>> Save { get; set; } = default!;
+    [Parameter] public bool Busy { get; set; }
+
+    private PlannerProject? projectDraft;
+    private PlannerMilestone? milestoneDraft;
+    private string milestoneTitle = "";
+    private DateOnly? milestoneDue;
+    private bool milestoneHidden, checkpointEdited;
+    private int? progressValue, checkpointValue;
+
+    private static string ProjectUrl(Guid id) => $"/planner/projects/{id}";
+
+    private void NewProject(Guid? parent) =>
+        projectDraft = new(Guid.NewGuid(), "", "", ProgressMeasure.Tasks, "", 0, 0, 0, parent);
+
+    private async Task SaveProject(PlannerProject project)
+    {
+        if (await Save(state => state.SaveProject(project, Today), "Project saved.") is null)
+            return;
+        projectDraft = null;
+        progressValue = null;
+        if (ProjectId != project.Id)
+            Navigation.NavigateTo(ProjectUrl(project.Id));
+    }
+
+    private void NewMilestone(Guid id) => EditMilestone(new(Guid.NewGuid(), id, "", null, false, 0));
+
+    private void EditMilestone(PlannerMilestone milestone)
+    {
+        milestoneDraft = milestone;
+        (milestoneTitle, milestoneDue, milestoneHidden) = (milestone.Title, milestone.Due, milestone.HiddenFromDashboard);
+    }
+
+    private async Task SaveMilestone(PlannerMilestone milestone)
+    {
+        var updated = milestone with { Title = milestoneTitle, Due = milestoneDue, HiddenFromDashboard = milestoneHidden };
+        if (await Save(state => state.SaveMilestone(updated), "Milestone saved.") is not null)
+            milestoneDraft = null;
+    }
+
+    private Task ToggleMilestone(PlannerMilestone milestone) =>
+        Save(state => state.SaveMilestone(milestone with { Done = !milestone.Done }),
+            milestone.Done ? "Milestone reopened." : "Milestone completed.");
+
+    private void ReadProgress(ChangeEventArgs args) =>
+        progressValue = int.TryParse(args.Value?.ToString(), out var value) ? value : null;
+
+    private async Task LogProgress(PlannerProject project)
+    {
+        if (progressValue is { } value
+            && await Save(state => state.SaveProject(project with { Value = value }, Today), "Progress updated.") is not null)
+            progressValue = null;
+    }
+
+    private void ReadCheckpoint(ChangeEventArgs args)
+    {
+        checkpointEdited = true;
+        checkpointValue = int.TryParse(args.Value?.ToString(), out var value) ? value : null;
+    }
+
+    private async Task SaveCheckpoint(PlannerProject project, DateOnly week)
+    {
+        if (checkpointEdited && await Save(state => state.SaveCheckpoint(project.Id, week, checkpointValue),
+            checkpointValue is null ? "Checkpoint cleared." : "Checkpoint saved.") is not null)
+            checkpointEdited = false;
+    }
+}

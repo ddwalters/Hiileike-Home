@@ -79,6 +79,10 @@ run_with_progress() {
 }
 
 dump_command=(docker exec --user postgres "$container" pg_dump -U "$admin" -d "$database" --format=custom --schema=lore --no-owner --no-privileges)
+planner_exists=$("${psql_command[@]}" -c "SELECT to_regnamespace('planner') IS NOT NULL")
+if [[ "$planner_exists" == t ]]; then
+    dump_command+=(--schema=planner)
+fi
 run_with_progress "$work/lore.dump" "${dump_command[@]}"
 run_with_progress "$work/pictures.tar" tar -C "$pictures" -cf - .
 

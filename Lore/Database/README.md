@@ -1,4 +1,4 @@
-# Lore storage
+# Project Notes storage
 
 Use the existing PostgreSQL server, database `hiileikehome_db`, and schema `lore`.
 The application connects using the shared `hiileike` PostgreSQL login.
@@ -26,7 +26,12 @@ in a password does not become connection string syntax.
 The first database operation applies any pending embedded, versioned SQL migrations.
 It creates only objects inside `lore`. A configured database failure is surfaced
 to the editor. File storage is used when no database setting is supplied, for
-local development. Existing test JSON is not imported automatically.
+local development. Switching storage backends does not import their data.
+
+Migration 003 associates existing entries and drafts with the catalog shown
+under Demons Arcade. It leaves the revision snapshots, picture keys, and
+entry IDs in place. The file backend reads older entry and draft JSON in
+place and resolves their original categories the same way.
 
 ## Desktop database access
 
@@ -64,10 +69,12 @@ erDiagram
     entries o|--o| drafts : edited
 ```
 
-- `entries` holds the current searchable fields and revision number.
-  Kinds are Item 0, Character 1, Quest 2, Location 3, Environment 4,
-  Ambiance 5, and Misc 6. Statuses are Idea 0,
-  Planned 1, In progress 2, and Implemented 3.
+- `entries` holds the current searchable fields, project catalog ID, and
+  revision number. The optional legacy kind identifies original categories.
+  Statuses are Idea 0, Planned 1, In progress 2, and Implemented 3.
+- `note_categories` stores names for each project's user-defined categories,
+  including any renamed categories from the original catalog. Revisions keep
+  the category name recorded when the note was saved.
 - `entry_links` stores each reciprocal connection once, with the smaller UUID first.
 - `tags` has a case-insensitive unique name. `entry_tags` preserves display order.
 - `entry_revisions.snapshot` holds the complete historical entry as JSONB,
@@ -77,7 +84,7 @@ erDiagram
   `pictures` subfolder of `Lore__DataDirectory`.
 - `revision_pictures` records which pictures appeared in each revision, in order.
   Removing a picture from the current entry retains it for historical revisions.
-- `drafts` has one slot per existing entry and one shared slot for a new entry.
+- `drafts` has one slot per existing entry and one new-entry slot per project catalog.
   The new-entry slot has a null `entry_id`. Draft stamps prevent one editor from
   silently overwriting another editor's draft.
 - `schema_migrations` records the installed schema version.
@@ -94,7 +101,8 @@ The executable table definitions are in [001_initial.sql](001_initial.sql).
 
 ## Backups
 
-The supplied `backup.sh` backs up this schema and its pictures. It can be run
+The supplied `backup.sh` backs up this schema and its pictures. The same dump
+includes the Planner schema when it exists in the same database. It can be run
 manually after database deployment, for example:
 
 ```bash
@@ -126,11 +134,12 @@ Add `--apply` to perform the removals.
 
 Each successful directory contains `lore.dump`, `pictures.tar`, and `manifest.json`. Restore the
 dump into an empty database whose `lore` schema belongs to the application role.
+If the dump contains Planner, ensure `planner` also belongs to the application role.
 Use `pg_restore --no-owner --no-privileges` as that role. Extract `pictures.tar`
 into the attachment directory's `pictures` subfolder while Lore is offline.
 
-The SQL dump also contains schema creation, so when restoring into an already
-created `lore` schema, use a restore list that excludes its SCHEMA item.
+The dump contains schema creation. When restoring into an already created
+schema, use a restore list that excludes its SCHEMA item.
 Test restoration in a separate empty database before replacing live data.
 
 Keep a second copy of the backup directory on independent storage. A backup on

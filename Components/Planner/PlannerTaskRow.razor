@@ -1,0 +1,17 @@
+<a class="planner-task-row" href="@($"/planner/tasks/{Item.Id}")">
+    <span class="@($"planner-task-dot {Item.Status.ToString().ToLowerInvariant()}")" aria-hidden="true"></span>
+    <span class="planner-task-copy">
+        <strong>@Item.Title</strong>
+        <small>@(Workspace.Project(Item.ProjectId)?.Name ?? "Unassigned") · @Item.Status.Label()</small>
+    </span>
+    @if (Item.Due is { } date)
+    {
+        <time class="@(Item.IsOpen && date < PlannerCalendar.Today ? "overdue" : null)" datetime="@date.ToString("yyyy-MM-dd")">@date.ToString("MMM d")</time>
+    }
+    <LoreIcon Name="arrow" Size="15" />
+</a>
+
+@code {
+    [Parameter, EditorRequired] public PlannerTask Item { get; set; } = default!;
+    [Parameter, EditorRequired] public PlannerWorkspace Workspace { get; set; } = default!;
+}

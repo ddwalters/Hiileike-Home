@@ -10,11 +10,12 @@
         <label>Title
             <input @ref="titleInput" @bind="title" @bind:event="oninput" required maxlength="120" />
         </label>
-        <label>Type
-            <select @bind="kind">
-                @foreach (var option in Enum.GetValues<EntryKind>())
+        <label>Category
+            <select @bind="categoryId">
+                <option value="">Uncategorized</option>
+                @foreach (var option in Categories)
                 {
-                    <option value="@option">@option</option>
+                    <option value="@option.Id">@option.Name</option>
                 }
             </select>
         </label>
@@ -33,9 +34,12 @@
 </form>
 
 @code {
-    [Parameter] public EntryKind InitialKind { get; set; }
+    [Parameter, EditorRequired] public Guid ProjectId { get; set; }
+    [Parameter, EditorRequired] public IReadOnlySet<Guid> Scope { get; set; } = new HashSet<Guid>();
+    [Parameter] public NoteCategory[] Categories { get; set; } = [];
+    [Parameter] public Guid? InitialCategory { get; set; }
     [Parameter] public string Heading { get; set; } = "Quick capture";
-    [Parameter] public string SaveLabel { get; set; } = "Save entry";
+    [Parameter] public string SaveLabel { get; set; } = "Save note";
     [Parameter] public EventCallback<LoreEntry> Saved { get; set; }
     [Parameter] public EventCallback Cancelled { get; set; }
 
@@ -43,11 +47,11 @@
     private string title = "";
     private string notes = "";
     private string? error;
-    private EntryKind kind;
+    private Guid? categoryId;
     private bool finished;
     private bool Dirty => !finished && (title.Length > 0 || notes.Length > 0);
 
-    protected override void OnInitialized() => kind = InitialKind;
+    protected override void OnInitialized() => categoryId = InitialCategory;
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
@@ -69,7 +73,12 @@
         LoreEntry saved;
         try
         {
-            saved = Store.Save(LoreEntry.New(kind) with { Title = title, Notes = notes }, []);
+            saved = Store.Save(LoreEntry.New(ProjectId, categoryId) with { Title = title, Notes = notes }, [], Scope);
+        }
+        catch (InvalidOperationException ex)
+        {
+            error = ex.Message;
+            return;
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Text.Json.JsonException)
         {

@@ -1,0 +1,73 @@
+<form class="planner-panel planner-form" aria-label="Project details" @onsubmit="Save" @onsubmit:preventDefault>
+    <label>Project name <input required maxlength="120" @bind="name" /></label>
+    <label>Project notes <textarea rows="4" maxlength="4000" @bind="notes"></textarea></label>
+    <div class="planner-fields">
+        <label>Parent project
+            <select @bind="parentId">
+                <option value="">Top-level project</option>
+                @foreach (var (project, depth) in Workspace.ProjectTree().Where(item => item.Project.Id != Item.Id
+                    && !Workspace.Ancestors(item.Project.ParentId).Any(parent => parent.Id == Item.Id)))
+                {
+                    <option value="@project.Id">@($"{new string('·', depth)} {project.Name}".TrimStart())</option>
+                }
+            </select>
+        </label>
+        <label>Measure progress by
+            <select @bind="measure">
+                <option value="@ProgressMeasure.Tasks">Completed tasks</option>
+                <option value="@ProgressMeasure.Milestones">Completed milestones</option>
+                <option value="@ProgressMeasure.Subprojects">Average subproject progress</option>
+                <option value="@ProgressMeasure.Numeric">Numeric target</option>
+            </select>
+        </label>
+        @if (measure == ProgressMeasure.Numeric)
+        {
+            <label>Unit <input required maxlength="32" placeholder="e.g. pages" @bind="unit" /></label>
+            <label>Total target <input required type="number" min="1" @bind="target" /></label>
+            <label>Current value <input required type="number" min="0" @bind="value" /></label>
+        }
+    </div>
+    @if (measure is ProgressMeasure.Tasks or ProgressMeasure.Milestones)
+    {
+        <p class="planner-muted">Includes work in this project and its subprojects.</p>
+    }
+    @if (measure == ProgressMeasure.Subprojects)
+    {
+        <p class="planner-muted">Each direct subproject contributes equally to this project's progress.</p>
+    }
+    <label class="planner-checkbox"><input type="checkbox" @bind="hidden" /> Hide this project and its subprojects from the dashboard</label>
+    @if (Workspace.IsDashboardHidden(parentId))
+    {
+        <p class="planner-muted">The parent project is hidden from the dashboard.</p>
+    }
+    <div class="planner-actions">
+        <button type="submit" class="planner-button primary" disabled="@Busy">Save project</button>
+        <button type="button" class="planner-button" @onclick="Cancel">Cancel</button>
+    </div>
+</form>
+
+@code {
+    [Parameter, EditorRequired] public PlannerProject Item { get; set; } = default!;
+    [Parameter, EditorRequired] public PlannerWorkspace Workspace { get; set; } = default!;
+    [Parameter, EditorRequired] public EventCallback<PlannerProject> Submit { get; set; }
+    [Parameter, EditorRequired] public EventCallback Cancel { get; set; }
+    [Parameter] public bool Busy { get; set; }
+
+    private string name = "", notes = "", unit = "";
+    private ProgressMeasure measure;
+    private Guid? parentId;
+    private int value, target;
+    private bool hidden;
+
+    protected override void OnInitialized()
+    {
+        (name, notes, unit, measure, parentId, value, target, hidden) =
+            (Item.Name, Item.Notes, Item.Unit, Item.Measure, Item.ParentId, Item.Value, Item.Target, Item.HiddenFromDashboard);
+    }
+
+    private Task Save() => Submit.InvokeAsync(Item with
+    {
+        Name = name, Notes = notes, Unit = unit, Measure = measure, ParentId = parentId,
+        Value = value, Target = target, HiddenFromDashboard = hidden
+    });
+}

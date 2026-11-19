@@ -5,8 +5,12 @@
     }
     <div class="card-content">
         <div class="card-top">
-            <span class="kind-chip"><LoreIcon Name="@Entry.Kind.ToString()" Size="17" /></span>
-            <span class="kind-label">@Entry.Kind</span>
+            <span class="kind-chip"><LoreIcon Name="@Entry.IconName" Size="17" /></span>
+            <span class="kind-label">@Entry.CategoryLabel</span>
+            @if (!string.IsNullOrEmpty(ProjectName))
+            {
+                <small class="notes-source">@ProjectName</small>
+            }
             @if (Entry.Pinned)
             {
                 <span class="pin" title="Pinned"><LoreIcon Name="pin" Size="16" /></span>
@@ -44,4 +48,5 @@
 @code {
     [Parameter, EditorRequired] public LoreEntry Entry { get; set; } = default!;
     [Parameter, EditorRequired] public string Href { get; set; } = "";
+    [Parameter] public string? ProjectName { get; set; }
 }

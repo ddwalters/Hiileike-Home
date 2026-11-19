@@ -1,5 +1,6 @@
 using HiileikeHome.Components;
 using HiileikeHome.Lore;
+using HiileikeHome.Planner;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Authentication.OpenIdConnect;
@@ -14,6 +15,8 @@ builder.Services.AddRazorComponents()
     .AddInteractiveServerComponents()
     .AddHubOptions(options => options.MaximumReceiveMessageSize = 512 * 1024);
 builder.Services.AddSingleton<LoreStore>();
+builder.Services.AddSingleton<PlannerStore>();
+builder.Services.AddSingleton<ProjectNotesWorkspace>();
 
 // Authentik login
 var authority = builder.Configuration["Authentik:Authority"];
@@ -100,9 +103,10 @@ app.MapPost("/logout", async (HttpContext context) =>
     return Results.Redirect("/");
 });
 
-app.MapGet("/lore/pictures/{id:guid}", (Guid id, LoreStore store, HttpContext context) =>
+app.MapGet("/lore/pictures/{id:guid}", async (Guid id, LoreStore store, ProjectNotesWorkspace projects, HttpContext context) =>
 {
-    if (store.OpenPicture(id) is not { } picture)
+    var scope = await projects.PictureScopeAsync(context.User);
+    if (store.OpenPicture(id, scope) is not { } picture)
         return Results.NotFound();
 
     context.Response.Headers.CacheControl = "private, no-store";

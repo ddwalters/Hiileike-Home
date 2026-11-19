@@ -14,8 +14,13 @@ internal sealed class LoreDatabase(string connectionString) : IDisposable
 
     public static LoreDatabase? Create(IConfiguration configuration)
     {
+        return GetConnectionString(configuration) is { } connection ? new LoreDatabase(connection) : null;
+    }
+
+    internal static string? GetConnectionString(IConfiguration configuration)
+    {
         if (configuration.GetConnectionString("Lore") is { Length: > 0 } connectionString)
-            return new LoreDatabase(connectionString);
+            return connectionString;
         if (configuration["Lore:Database:Password"] is not { Length: > 0 } password)
             return null;
 
@@ -29,7 +34,7 @@ internal sealed class LoreDatabase(string connectionString) : IDisposable
             GssEncryptionMode = GssEncryptionMode.Disable,
             ApplicationName = "HiileikeHome Lore"
         };
-        return new LoreDatabase(options.ConnectionString);
+        return options.ConnectionString;
     }
 
     public Session Begin()
@@ -53,10 +58,9 @@ internal sealed class LoreDatabase(string connectionString) : IDisposable
                 command.ExecuteNonQuery();
                 command.CommandText = "SELECT coalesce(max(version), 0) FROM lore.schema_migrations";
                 var version = (int)command.ExecuteScalar()!;
-                if (version > 2)
-                    throw new IOException("The Lore database schema is newer than this application.");
-
-                string[] scripts = ["001_initial.sql", "002_workspace_entry_types.sql"];
+                string[] scripts = ["001_initial.sql", "002_workspace_entry_types.sql", "003_project_notes.sql"];
+                if (version > scripts.Length)
+                    throw new IOException("The Project Notes schema is newer than this application.");
                 foreach (var scriptName in scripts.Skip(version))
                 {
                     using var script = typeof(LoreDatabase).Assembly.GetManifestResourceStream(
@@ -121,28 +125,56 @@ internal sealed class LoreDatabase(string connectionString) : IDisposable
             return original = versions.ToDictionary(item => item.Key, item => item.Value.ToArray());
         }
 
-        public LoreDraft? LoadDraft(Guid id)
+        public bool HasLegacyNotes()
         {
-            using var command = Command("SELECT payload FROM lore.drafts WHERE slot_id = $1", id);
+            using var command = Command("""
+                SELECT EXISTS (SELECT 1 FROM lore.entries WHERE project_id = $1)
+                    OR EXISTS (SELECT 1 FROM lore.drafts WHERE project_id = $1)
+                """, NoteCatalog.LegacyId);
+            return (bool)command.ExecuteScalar()!;
+        }
+
+        public NoteCategory[] LoadCategories(Guid projectId)
+        {
+            using var command = Command("SELECT id, name FROM lore.note_categories WHERE project_id = $1", projectId);
+            using var reader = command.ExecuteReader();
+            var categories = new List<NoteCategory>();
+            while (reader.Read())
+                categories.Add(new(reader.GetGuid(0), reader.GetString(1)));
+            return categories.ToArray();
+        }
+
+        public void SaveCategory(Guid projectId, NoteCategory category)
+        {
+            Execute("""
+                INSERT INTO lore.note_categories (project_id, id, name) VALUES ($1, $2, $3)
+                ON CONFLICT (project_id, id) DO UPDATE SET name = excluded.name
+                """, projectId, category.Id, category.Name);
+            transaction.Commit();
+        }
+
+        public LoreDraft? LoadDraft(Guid projectId, Guid id)
+        {
+            using var command = Command("SELECT payload FROM lore.drafts WHERE project_id = $1 AND slot_id = $2", projectId, id);
             return command.ExecuteScalar() is string json
                 ? JsonSerializer.Deserialize<LoreDraft>(json, Json) ?? throw new JsonException("A Lore draft is invalid.")
                 : null;
         }
 
-        public void SaveDraft(Guid id, LoreDraft draft)
+        public void SaveDraft(Guid projectId, Guid id, LoreDraft draft)
         {
             Execute("""
-                INSERT INTO lore.drafts (slot_id, entry_id, stamp, payload)
-                VALUES ($1, $2, $3, $4)
-                ON CONFLICT (slot_id) DO UPDATE
+                INSERT INTO lore.drafts (project_id, slot_id, entry_id, stamp, payload)
+                VALUES ($1, $2, $3, $4, $5)
+                ON CONFLICT (project_id, slot_id) DO UPDATE
                 SET stamp = excluded.stamp, payload = excluded.payload, updated_at = now()
-                """, id, id == Guid.Empty ? null : id, draft.Stamp, JsonValue(draft));
+                """, projectId, id, id == Guid.Empty ? null : id, draft.Stamp, JsonValue(draft));
             transaction.Commit();
         }
 
-        public bool ClearDraft(Guid id, Guid stamp)
+        public bool ClearDraft(Guid projectId, Guid id, Guid stamp)
         {
-            var count = Execute("DELETE FROM lore.drafts WHERE slot_id = $1 AND stamp = $2", id, stamp);
+            var count = Execute("DELETE FROM lore.drafts WHERE project_id = $1 AND slot_id = $2 AND stamp = $3", projectId, id, stamp);
             transaction.Commit();
             return count > 0;
         }
@@ -160,14 +192,14 @@ internal sealed class LoreDatabase(string connectionString) : IDisposable
                 var entry = item.Value[^1].Entry;
                 Execute("""
                     INSERT INTO lore.entries
-                        (id, kind, status, title, summary, notes, implementation, pinned, updated_at, revision)
-                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+                        (id, kind, status, title, summary, notes, implementation, pinned, updated_at, revision, project_id)
+                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
                     ON CONFLICT (id) DO UPDATE SET
                         kind = excluded.kind, status = excluded.status, title = excluded.title,
                         summary = excluded.summary, notes = excluded.notes, implementation = excluded.implementation,
                         pinned = excluded.pinned, updated_at = excluded.updated_at, revision = excluded.revision
-                    """, entry.Id, (short)entry.Kind, (short)entry.Status, entry.Title, entry.Summary, entry.Notes,
-                    entry.Implementation, entry.Pinned, entry.Updated, entry.Revision);
+                    """, entry.Id, (short?)entry.Kind, (short)entry.Status, entry.Title, entry.Summary, entry.Notes,
+                    entry.Implementation, entry.Pinned, entry.Updated, entry.Revision, entry.CatalogId);
             }
 
             foreach (var item in changed)

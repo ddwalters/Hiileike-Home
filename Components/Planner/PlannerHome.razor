@@ -1,0 +1,275 @@
+@page "/planner"
+@page "/planner/{Section}"
+@page "/planner/projects/{ProjectId:guid}"
+@page "/planner/tasks/{TaskId:guid}"
+@attribute [Authorize]
+@layout PlannerLayout
+@inject PlannerStore Store
+@inject ProjectNotesWorkspace ProjectNotes
+@inject AuthenticationStateProvider Authentication
+@inject NavigationManager Navigation
+@inject ILogger<PlannerHome> Logger
+
+<PageTitle>@PageName · Planner</PageTitle>
+
+<div class="planner-shell">
+    <aside class="planner-sidebar">
+        <a class="planner-brand" href="/planner">
+            <span class="planner-mark"><LoreIcon Name="grid" Size="21" /></span>
+            <span><strong>Planner</strong><small>Hiileike Home</small></span>
+        </a>
+        <nav aria-label="Planner">
+            <a class="@NavClass("dashboard")" aria-current="@Current("dashboard")" href="/planner">
+                <LoreIcon Name="grid" Size="16" /> Dashboard
+            </a>
+            <a class="@NavClass("board")" aria-current="@Current("board")" href="/planner/board">
+                <LoreIcon Name="Misc" Size="16" /> Board
+            </a>
+            <a class="@NavClass("projects")" aria-current="@Current("projects")" href="/planner/projects">
+                <LoreIcon Name="Quest" Size="16" /> Projects
+            </a>
+            <a class="@NavClass("inbox")" aria-current="@Current("inbox")" href="/planner/inbox">
+                <LoreIcon Name="Item" Size="16" /> Inbox
+                @if (workspace.Tasks.Count(task => task.IsInbox) is > 0 and var count)
+                {
+                    <small class="planner-nav-count">@count</small>
+                }
+            </a>
+            <a class="@NavClass("review")" aria-current="@Current("review")" href="/planner/review">
+                <LoreIcon Name="check" Size="16" /> Weekly review
+            </a>
+        </nav>
+        <div class="planner-sidebar-end">
+            <a class="planner-nav" href="/project-notes">
+                <LoreIcon Name="book" Size="17" /> Project Notes <span aria-hidden="true">↗</span>
+            </a>
+            <a class="planner-nav" href="/">
+                <LoreIcon Name="back" Size="17" /> Hiileike Home
+            </a>
+        </div>
+    </aside>
+
+    <div class="planner-main">
+        <header class="planner-topbar">
+            <div class="planner-breadcrumb"><a href="/">Hiileike</a><span aria-hidden="true">/</span><span>@PageName</span></div>
+            @if (loaded)
+            {
+                <button type="button" class="planner-button primary" aria-expanded="@capture" @onclick="ToggleCapture">
+                    <LoreIcon Name="plus" Size="17" /> Quick add
+                </button>
+            }
+        </header>
+
+        <main class="planner-content">
+            @if (error is not null)
+            {
+                <p class="planner-notice error" role="alert">@error</p>
+            }
+            @if (message is not null)
+            {
+                <p class="planner-notice success" role="status">@message</p>
+            }
+            @if (capture)
+            {
+                <form class="planner-panel planner-capture" aria-label="Quick add to Inbox" @onsubmit="Capture" @onsubmit:preventDefault>
+                    <label for="planner-capture-title">Capture to Inbox</label>
+                    <div class="planner-actions">
+                        <input id="planner-capture-title" maxlength="140" required placeholder="Task or idea" @bind="captureTitle" @ref="captureInput" />
+                        <button type="submit" class="planner-button primary" disabled="@busy">Add to Inbox</button>
+                        <button type="button" class="planner-button" @onclick="ToggleCapture">Close</button>
+                    </div>
+                </form>
+            }
+            @if (!loaded)
+            {
+                <h1>@PageName</h1>
+                @if (error is null)
+                {
+                    <p role="status">Loading Planner…</p>
+                }
+                else
+                {
+                    <button type="button" class="planner-button" @onclick="Load">Try again</button>
+                }
+            }
+            else
+            {
+                @switch (Page)
+                {
+                    case "dashboard":
+                        <PlannerDashboard Workspace="workspace" Today="Today" />
+                        break;
+                    case "board":
+                        <PlannerBoard Workspace="workspace" Today="Today" Save="Apply" Busy="busy" />
+                        break;
+                    case "projects":
+                        <PlannerProjects @key="ProjectId" ProjectId="ProjectId" Workspace="workspace" Today="Today" Save="Apply" Busy="busy" />
+                        break;
+                    case "inbox":
+                        <div class="planner-heading">
+                            <div><h1>Inbox</h1><p>Assign captured ideas to a project, schedule them, or archive them.</p></div>
+                            <button type="button" class="planner-button" @onclick="ToggleCapture">Capture an idea</button>
+                        </div>
+                        <section class="planner-panel">
+                            @foreach (var task in workspace.Tasks.Where(task => task.IsInbox).Reverse())
+                            {
+                                <PlannerTaskRow @key="task.Id" Item="task" Workspace="workspace" />
+                            }
+                            @if (!workspace.Tasks.Any(task => task.IsInbox))
+                            {
+                                <p class="planner-empty">Inbox is clear.</p>
+                            }
+                        </section>
+                        @if (workspace.Tasks.Any(task => task.Status == PlannerStatus.Archived))
+                        {
+                            <details class="planner-panel">
+                                <summary>Archived tasks</summary>
+                                @foreach (var task in workspace.Tasks.Where(task => task.Status == PlannerStatus.Archived).Reverse())
+                                {
+                                    <PlannerTaskRow @key="task.Id" Item="task" Workspace="workspace" />
+                                }
+                            </details>
+                        }
+                        break;
+                    case "review":
+                        <PlannerReview Workspace="workspace" Today="Today" Save="Apply" Busy="busy" />
+                        break;
+                    case "task":
+                        <PlannerTaskEditor @key="TaskId" TaskId="TaskId" InitialProject="InitialProject" InitialMilestone="InitialMilestone"
+                                           Workspace="workspace" Today="Today" Save="Apply" Busy="busy" />
+                        break;
+                    default:
+                        <h1>Page unavailable</h1>
+                        <a href="/planner" class="planner-button">Back to dashboard</a>
+                        break;
+                }
+            }
+        </main>
+    </div>
+</div>
+
+@code {
+    [Parameter] public string? Section { get; set; }
+    [Parameter] public Guid? ProjectId { get; set; }
+    [Parameter] public Guid? TaskId { get; set; }
+    [SupplyParameterFromQuery(Name = "project")] public Guid? InitialProject { get; set; }
+    [SupplyParameterFromQuery(Name = "milestone")] public Guid? InitialMilestone { get; set; }
+
+    private PlannerWorkspace workspace = new();
+    private ClaimsPrincipal user = new();
+    private bool loaded, busy, capture, focusCapture;
+    private string captureTitle = "";
+    private Guid? captureId;
+    private string? error, message;
+    private ElementReference captureInput;
+    private DateOnly Today => PlannerCalendar.Today;
+
+    private string Page => ProjectId is not null ? "projects" : TaskId is not null ? "task" : Section?.ToLowerInvariant() switch
+    {
+        null => "dashboard",
+        "new-task" => "task",
+        var section => section
+    };
+    private string PageName => Page switch
+    {
+        "dashboard" => "This week",
+        "board" => "Board",
+        "projects" => "Projects",
+        "inbox" => "Inbox",
+        "review" => "Weekly review",
+        "task" => TaskId is null ? "New task" : "Task",
+        _ => "Planner"
+    };
+    private string? Current(string page) => Page == page ? "page" : null;
+    private string NavClass(string page) => Page == page ? "planner-nav active" : "planner-nav";
+
+    protected override async Task OnParametersSetAsync()
+    {
+        capture = false;
+        focusCapture = false;
+        message = null;
+        await Load();
+    }
+
+    private async Task Load()
+    {
+        error = null;
+        loaded = false;
+        try
+        {
+            user = (await Authentication.GetAuthenticationStateAsync()).User;
+            workspace = await ProjectNotes.ReadAsync(user);
+            loaded = true;
+        }
+        catch (PlannerValidationException exception)
+        {
+            error = exception.Message;
+        }
+        catch (Exception exception)
+        {
+            Logger.LogError(exception, "Unable to load Planner");
+            error = "Planner storage is unavailable. Try again in a moment.";
+        }
+    }
+
+    private void ToggleCapture()
+    {
+        capture = !capture;
+        focusCapture = capture;
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (focusCapture)
+        {
+            focusCapture = false;
+            await captureInput.FocusAsync();
+        }
+    }
+
+    private async Task Capture()
+    {
+        var draft = PlannerTask.New() with { Id = captureId ??= Guid.NewGuid(), Title = captureTitle, InboxPending = true };
+        if (await Apply(state =>
+        {
+            if (state.Task(draft.Id) is null)
+                state.SaveTask(draft, Today);
+        }, "Added to Inbox.") is not null)
+        {
+            captureTitle = "";
+            captureId = null;
+            focusCapture = capture;
+        }
+    }
+
+    private async Task<PlannerWorkspace?> Apply(Action<PlannerWorkspace> change, string confirmation)
+    {
+        if (busy)
+            return null;
+        busy = true;
+        error = null;
+        message = null;
+        StateHasChanged();
+        try
+        {
+            workspace = await Store.ChangeAsync(user, change);
+            message = confirmation;
+            return workspace;
+        }
+        catch (PlannerValidationException exception)
+        {
+            error = exception.Message;
+        }
+        catch (Exception exception)
+        {
+            Logger.LogError(exception, "Unable to save Planner changes");
+            error = "Planner could not verify the save. Reload to check before retrying.";
+        }
+        finally
+        {
+            busy = false;
+            StateHasChanged();
+        }
+        return null;
+    }
+}

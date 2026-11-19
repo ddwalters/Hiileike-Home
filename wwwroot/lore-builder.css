@@ -41,7 +41,7 @@
     .brand-mark { width: 43px; height: 43px; }
     .brand strong { display: block; font-size: 1.12rem; letter-spacing: -.035em; }
     .brand small { display: block; margin-top: 3px; font-size: .61rem; font-weight: 700; letter-spacing: .18em; }
-    .sidebar nav { margin-top: 51px; }
+    .sidebar nav { margin-top: 30px; overflow: auto; }
     .nav-caption { font-size: .67rem; font-weight: 700; color: var(--muted); letter-spacing: .15em; padding: 0 10px 11px; }
     .nav-item {
         display: grid; grid-template-columns: 17px minmax(0, 1fr) auto; gap: 11px; align-items: center;
@@ -59,22 +59,22 @@
     .sidebar-foot span, .eyebrow > span { width: 7px; height: 7px; display: inline-block; border-radius: 50%; background: var(--lan); }
     .workspace { min-width: 0; display: flex; flex-direction: column; }
     .topbar {
-        min-height: 69px; padding: 12px clamp(20px, 4vw, 58px); border-bottom: 1px solid var(--border);
+        min-height: 49px; padding: 4px clamp(20px, 4vw, 58px); border-bottom: 1px solid var(--border);
         display: flex; align-items: center; justify-content: space-between; gap: 12px;
     }
     .crumb { display: flex; flex-wrap: wrap; align-items: center; gap: 9px; font-size: .86rem; color: var(--muted); }
     .crumb a { white-space: nowrap; }
     .crumb svg { color: var(--accent); }
     .crumb b { color: #677285; font-weight: 500; }
-    .content { width: min(100%, 1370px); margin: 0 auto; padding: 33px clamp(20px, 4vw, 58px) 46px; flex: 1; }
+    .content { width: min(100%, 1370px); margin: 0 auto; padding: 22px clamp(20px, 4vw, 58px) 46px; flex: 1; }
     .workspace-foot {
         border-top: 1px solid var(--border); padding: 16px clamp(20px, 4vw, 58px); font-size: .74rem; color: var(--muted);
     }
     .workspace-foot span { padding: 0 5px; color: var(--accent); }
 
     .hero {
-        position: relative; isolation: isolate; overflow: hidden; min-height: 210px; display: flex; align-items: center;
-        padding: 32px clamp(21px, 4vw, 44px); border-radius: 22px; border: 1px solid #423440;
+        position: relative; isolation: isolate; overflow: hidden; min-height: 140px; display: flex; align-items: center;
+        padding: 12px clamp(21px, 4vw, 44px); border-radius: 22px; border: 1px solid #423440;
         background: radial-gradient(ellipse at 98% 18%, #442834 0%, transparent 63%), linear-gradient(115deg, #1c222b, #25232d);
     }
     .hero h1, .page-title h1 {
@@ -82,15 +82,16 @@
         overflow-wrap: anywhere;
     }
     .hero h1 {
-        width: fit-content; color: var(--peach);
+        width: fit-content; color: var(--peach); font-size: clamp(1.85rem, 3.35vw, 3.12rem);
         background: linear-gradient(100deg, #eb7883, #f0a38c);
-        background-clip: text; -webkit-text-fill-color: transparent; margin: 9px 0 13px;
+        background-clip: text; -webkit-text-fill-color: transparent; margin: 4px 0 5px;
     }
+    .hero h1:focus { outline: none; }
     .hero p:not(.eyebrow) { color: #bbc2ce; max-width: 41ch; font-size: .98rem; line-height: 1.6; }
     .eyebrow { color: #f09ba3; font-size: .69rem; font-weight: 750; letter-spacing: .18em; }
     .eyebrow > span { margin-right: 6px; background: var(--accent); vertical-align: 1px; }
     .hero-emblem { position: absolute; z-index: -1; inset: 0 18px 0 auto; width: min(33%, 300px); display: grid; place-items: center; }
-    .hero-emblem svg { width: 100%; max-height: 190px; stroke: #b56879; stroke-width: 1; opacity: .61; }
+    .hero-emblem svg { width: 100%; max-height: 128px; stroke: #b56879; stroke-width: 1; opacity: .61; }
     .hero-emblem circle:first-child, .chart-guides { stroke-dasharray: 3 6; opacity: .58; }
     .chart-center { fill: #df8b97; }
     .chart-stars { stroke: #e2a193; }
@@ -109,6 +110,18 @@
     .actions { display: flex; flex-wrap: wrap; align-items: center; gap: 9px; }
 
     .browser { margin-top: 31px; }
+    .notes-options { margin-top: 12px; }
+    .notes-categories { margin-top: 10px; }
+    .notes-mobile-category { display: none; }
+    .notes-mobile-category select { min-width: 0; }
+    .notes-source { color: var(--muted); font-size: .73rem; overflow-wrap: anywhere; }
+    .nav-item .notes-source { display: block; }
+    .notes-category-nav span { overflow-wrap: anywhere; }
+    .notes-project-list { margin-top: 18px; }
+    .notes-project-list .related {
+        margin-left: calc(var(--notes-depth) * clamp(6px, 2vw, 22px));
+    }
+    .card-top { flex-wrap: wrap; }
     .list-heading, .section-heading { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
     .list-heading > div, .card-top, .card-foot, .card-meta, .card-meta span { display: flex; align-items: center; gap: 8px; }
     .list-heading h2 { font-size: 1.36rem; letter-spacing: -.025em; }
@@ -251,19 +264,22 @@
     }
     @media (max-width: 810px) {
         .app-shell { display: block; }
-        .sidebar { position: static; height: auto; border-right: 0; border-bottom: 1px solid var(--border); padding: 14px 16px 6px; }
-        .sidebar nav { display: flex; flex-wrap: wrap; margin-top: 13px; gap: 4px; }
+        .sidebar {
+            position: static; flex-direction: row; justify-content: space-between; align-items: center; gap: 8px;
+            height: auto; border-right: 0; border-bottom: 1px solid var(--border); padding: 10px 16px;
+        }
+        .sidebar nav { margin-top: 0; }
         .nav-item { display: flex; padding: 6px; gap: 5px; }
-        .nav-caption, .sidebar-foot { display: none; }
-        .topbar { min-height: 59px; }
-        .content { padding-top: 20px; }
+        .nav-caption, .sidebar-foot, .notes-category-nav { display: none; }
+        .notes-mobile-category { display: flex; align-items: center; gap: 8px; margin: 12px 0; font-size: .85rem; }
+        .content { padding-top: 14px; }
     }
     @media (max-width: 620px) {
-        .topbar { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; padding-block: 16px; }
+        .topbar { display: grid; grid-template-columns: minmax(0, 1fr); gap: 6px; padding-block: 6px; }
         .topbar-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
         .topbar-actions .button { min-height: 44px; width: 100%; }
         .detail-grid { grid-template-columns: minmax(0, 1fr); }
-        .hero { min-height: 165px; }
+        .hero { min-height: 110px; }
         .hero-emblem { inset-inline-end: 0; opacity: .43; }
         .page-title { flex-wrap: wrap; }
     }

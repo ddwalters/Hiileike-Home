@@ -1,0 +1,82 @@
+@{
+    var week = PlannerCalendar.WeekOf(Today);
+    var scope = projectId is { } selected ? Workspace.ProjectTree(selected).Select(item => item.Project.Id).Append(selected).ToHashSet() : null;
+    var tasks = Workspace.Tasks.Where(task => (task.IsOpen || task.Status == PlannerStatus.Done)
+        && !task.IsInbox && (scope is null || (task.ProjectId is { } id && scope.Contains(id)))).ToArray();
+}
+
+<div class="planner-heading">
+    <div><h1>Board</h1><p>@PlannerCalendar.Range(week)</p></div>
+    <div class="planner-actions">
+        <label class="planner-compact-field">Project
+            <select @bind="projectId">
+                <option value="">All projects</option>
+                @foreach (var (project, depth) in Workspace.ProjectTree())
+                {
+                    <option value="@project.Id">@($"{new string('·', depth)} {project.Name}".TrimStart())</option>
+                }
+            </select>
+        </label>
+        <a class="planner-button primary" href="@(projectId is { } id ? $"/planner/new-task?project={id}" : "/planner/new-task")">
+            <LoreIcon Name="plus" Size="17" /> New task
+        </a>
+    </div>
+</div>
+
+<div class="planner-board">
+    @foreach (var lane in Lanes)
+    {
+        var cards = tasks.Where(task => task.Lane(week) == lane).OrderBy(task => task.Priority == 0 ? 4 : task.Priority)
+            .ThenBy(task => task.Due ?? DateOnly.MaxValue).ThenBy(task => task.Title).ToArray();
+        <section class="@($"planner-column {lane.ToString().ToLowerInvariant()}")" aria-label="@lane.Label()">
+            <div class="planner-column-heading">
+                <span aria-hidden="true"></span><h2>@lane.Label()</h2><small>@cards.Length</small>
+            </div>
+            @if (cards.Length == 0)
+            {
+                <p class="planner-empty">No tasks</p>
+            }
+            @foreach (var task in cards)
+            {
+                <article class="planner-board-card" @key="task.Id">
+                    <a href="@($"/planner/tasks/{task.Id}")"><strong>@task.Title</strong></a>
+                    <div class="planner-card-meta">
+                        <span>@(Workspace.Project(task.ProjectId)?.Name ?? "Unassigned")</span>
+                        @if (task.Due is { } due)
+                        {
+                            <time class="@(task.IsOpen && due < Today ? "overdue" : null)" datetime="@due.ToString("yyyy-MM-dd")">
+                                Due @due.ToString("MMM d")
+                            </time>
+                        }
+                        @if (task.IsOpen && task.Week is { } scheduled && scheduled != week)
+                        {
+                            <span>Week of @scheduled.ToString("MMM d")</span>
+                        }
+                    </div>
+                    <label class="planner-compact-field">
+                        <span>Move to</span>
+                        <select aria-label="@($"Move {task.Title}")" @bind:get="lane" @bind:set="destination => Move(task, destination)" disabled="@Busy">
+                            @foreach (var destination in Lanes)
+                            {
+                                <option value="@destination">@destination.Label()</option>
+                            }
+                        </select>
+                    </label>
+                </article>
+            }
+        </section>
+    }
+</div>
+
+@code {
+    private static readonly PlannerLane[] Lanes = Enum.GetValues<PlannerLane>();
+    [Parameter, EditorRequired] public PlannerWorkspace Workspace { get; set; } = default!;
+    [Parameter, EditorRequired] public DateOnly Today { get; set; }
+    [Parameter, EditorRequired] public Func<Action<PlannerWorkspace>, string, Task<PlannerWorkspace?>> Save { get; set; } = default!;
+    [Parameter] public bool Busy { get; set; }
+
+    private Guid? projectId;
+
+    private Task Move(PlannerTask task, PlannerLane lane) =>
+        Save(state => state.MoveTask(task, lane, Today), $"Moved to {lane.Label()}.");
+}

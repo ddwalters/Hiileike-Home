@@ -1,0 +1,12 @@
+<div class="planner-meter">
+    <div class="planner-meter-label"><span>@Progress.Label</span><strong>@(Progress.Target > 0 ? $"{Progress.Percent}%" : "—")</strong></div>
+    @if (Progress.Target > 0)
+    {
+        <progress value="@Math.Min(Progress.Value, Progress.Target)" max="@Progress.Target" aria-label="@Label"></progress>
+    }
+</div>
+
+@code {
+    [Parameter, EditorRequired] public ProjectProgress Progress { get; set; }
+    [Parameter, EditorRequired] public string Label { get; set; } = "";
+}

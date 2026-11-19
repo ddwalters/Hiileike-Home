@@ -26,47 +26,110 @@ public sealed class LoreStore(IWebHostEnvironment environment, IConfiguration co
         var path = PicturePath(picture);
         return File.Exists(path) ? path : Path.Combine(root, "pictures", picture.Id.ToString("N"));
     }
-    private string DraftPath(Guid id) => Path.Combine(root, "drafts", id == Guid.Empty ? "new.json" : $"{id:N}.json");
-
-    public LoreDraft? LoadDraft(Guid id)
+    private string DraftPath(Guid projectId, Guid id)
     {
+        var directory = projectId == NoteCatalog.LegacyId ? Path.Combine(root, "drafts") : Path.Combine(root, "drafts", projectId.ToString("N"));
+        return Path.Combine(directory, id == Guid.Empty ? "new.json" : $"{id:N}.json");
+    }
+
+    public bool HasLegacyNotes() => Run(session => session?.HasLegacyNotes()
+        ?? (Load(null).Values.Any(versions => versions[^1].Entry.CatalogId == NoteCatalog.LegacyId)
+            || File.Exists(DraftPath(NoteCatalog.LegacyId, Guid.Empty))));
+
+    public Dictionary<Guid, NoteCategory[]> Categories(IReadOnlySet<Guid> projectIds) =>
+        Run(session => projectIds.ToDictionary(id => id, id => Categories(id, session)));
+
+    public NoteCategory SaveCategory(Guid projectId, Guid? id, string name, string? expectedName, IReadOnlySet<Guid> scope)
+    {
+        RequireAccess(projectId, scope);
         return Run(session =>
         {
-            return LoadDraft(id, session);
+            var categories = Categories(projectId, session);
+            var current = categories.FirstOrDefault(category => category.Id == id);
+            if (id is not null && (current is null || current.Name != expectedName))
+                throw new InvalidOperationException("This category changed in another tab. Reload Project Notes and try again.");
+
+            name = name.Trim();
+            if (name.Length is < 1 or > 64)
+                throw new InvalidOperationException("Enter a category name between 1 and 64 characters.");
+            if (categories.Any(category => category.Id != id && category.Name.Equals(name, StringComparison.OrdinalIgnoreCase)))
+                throw new InvalidOperationException("This project already has a category with that name.");
+
+            var saved = new NoteCategory(id ?? Guid.NewGuid(), name, current?.LegacyKind);
+            if (session is not null)
+                session.SaveCategory(projectId, saved);
+            else
+                WriteJson(CategoryPath(projectId), categories.Where(category => category.Id != saved.Id).Append(saved).ToArray());
+            return saved;
         });
     }
 
-    private LoreDraft? LoadDraft(Guid id, DatabaseSession? session)
+    private string CategoryPath(Guid projectId) => Path.Combine(root, "categories", $"{projectId:N}.json");
+
+    private NoteCategory[] Categories(Guid projectId, DatabaseSession? session)
     {
-        var draft = session is null ? ReadDraft(DraftPath(id)) : session.LoadDraft(id);
+        var categories = projectId == NoteCatalog.LegacyId
+            ? NoteCatalog.LegacyCategories.ToDictionary(category => category.Id) : new Dictionary<Guid, NoteCategory>();
+        var stored = session is null ? ReadCategories(CategoryPath(projectId)) : session.LoadCategories(projectId);
+        foreach (var category in stored)
+            categories[category.Id] = category with { LegacyKind = categories.GetValueOrDefault(category.Id)?.LegacyKind };
+        return categories.Values.OrderBy(category => category.Name, StringComparer.OrdinalIgnoreCase).ToArray();
+    }
+
+    private static NoteCategory[] ReadCategories(string path)
+    {
+        try
+        {
+            using var file = File.OpenRead(path);
+            return JsonSerializer.Deserialize<NoteCategory[]>(file, Json) ?? throw new JsonException("The note categories are invalid.");
+        }
+        catch (IOException ex) when (ex is FileNotFoundException or DirectoryNotFoundException)
+        {
+            return [];
+        }
+    }
+
+    public LoreDraft? LoadDraft(Guid projectId, Guid id, IReadOnlySet<Guid> scope)
+    {
+        RequireAccess(projectId, scope);
+        return Run(session => LoadDraft(projectId, id, session));
+    }
+
+    private LoreDraft? LoadDraft(Guid projectId, Guid id, DatabaseSession? session)
+    {
+        var draft = session is null ? ReadDraft(DraftPath(projectId, id)) : session.LoadDraft(projectId, id);
         return id == Guid.Empty && draft is not null && Load(session).ContainsKey(draft.Entry.Id) ? null : draft;
     }
 
-    public bool SaveDraft(Guid id, LoreDraft draft, Guid? expectedStamp)
+    public bool SaveDraft(Guid id, LoreDraft draft, Guid? expectedStamp, IReadOnlySet<Guid> scope)
     {
+        var projectId = draft.Entry.CatalogId;
+        RequireAccess(projectId, scope);
         return Run(session =>
         {
-            var path = DraftPath(id);
-            var previous = LoadDraft(id, session);
+            var catalog = Load(session);
+            var previous = LoadDraft(projectId, id, session);
             if (previous?.Stamp != expectedStamp || (id == Guid.Empty
-                ? Load(session).ContainsKey(draft.Entry.Id) : !Load(session).ContainsKey(id)))
+                ? catalog.ContainsKey(draft.Entry.Id)
+                : draft.Entry.Id != id || !catalog.TryGetValue(id, out var versions) || versions[^1].Entry.CatalogId != projectId))
                 return false;
 
             if (session is null)
-                WriteJson(path, draft);
+                WriteJson(DraftPath(projectId, id), draft);
             else
-                session.SaveDraft(id, draft);
+                session.SaveDraft(projectId, id, draft);
             return true;
         });
     }
 
-    public bool ClearDraft(Guid id, Guid stamp)
+    public bool ClearDraft(Guid projectId, Guid id, Guid stamp, IReadOnlySet<Guid> scope)
     {
+        RequireAccess(projectId, scope);
         return Run(session =>
         {
             if (session is not null)
-                return session.ClearDraft(id, stamp);
-            var path = DraftPath(id);
+                return session.ClearDraft(projectId, id, stamp);
+            var path = DraftPath(projectId, id);
             if (ReadDraft(path)?.Stamp != stamp)
                 return false;
 
@@ -91,21 +154,22 @@ public sealed class LoreStore(IWebHostEnvironment environment, IConfiguration co
         }
     }
 
-    public (LoreEntry[] Entries, LoreRevision[] Revisions) Snapshot(Guid? entryId)
+    public (LoreEntry[] Entries, LoreRevision[] Revisions) Snapshot(Guid? entryId, IReadOnlySet<Guid> scope)
     {
         return Run(session =>
         {
             var catalog = Load(session);
-            var revisions = entryId is { } id && catalog.TryGetValue(id, out var found) ? found : [];
-            return (catalog.Values.Select(versions => versions[^1].Entry).ToArray(), revisions);
+            var revisions = entryId is { } id && catalog.TryGetValue(id, out var found)
+                && scope.Contains(found[^1].Entry.CatalogId) ? found : [];
+            return (catalog.Values.Select(versions => versions[^1].Entry).Where(entry => scope.Contains(entry.CatalogId)).ToArray(), revisions);
         });
     }
 
-    public (Stream Stream, string ContentType)? OpenPicture(Guid id)
+    public (Stream Stream, string ContentType)? OpenPicture(Guid id, IReadOnlySet<Guid> scope)
     {
         return Run<(Stream Stream, string ContentType)?>(session =>
         {
-            var picture = Load(session).Values.SelectMany(versions => versions)
+            var picture = Load(session).Values.Where(versions => scope.Contains(versions[^1].Entry.CatalogId)).SelectMany(versions => versions)
                 .SelectMany(version => version.Entry.Pictures).FirstOrDefault(picture => picture.Id == id);
             if (picture is null)
                 return null;
@@ -123,20 +187,31 @@ public sealed class LoreStore(IWebHostEnvironment environment, IConfiguration co
         });
     }
 
-    public LoreEntry Save(LoreEntry draft, IReadOnlyList<PictureUpload> uploads)
+    public LoreEntry Save(LoreEntry draft, IReadOnlyList<PictureUpload> uploads, IReadOnlySet<Guid> scope)
     {
+        var projectId = draft.CatalogId;
+        RequireAccess(projectId, scope);
         return Run(session =>
         {
             var catalog = Load(session);
             var current = CurrentEntries(catalog);
             current.TryGetValue(draft.Id, out var original);
+            if (original is not null && original.CatalogId != projectId)
+                throw new InvalidOperationException("This note belongs to a different project.");
             VerifyRevision(original, draft.Revision);
             var title = draft.Title.Trim();
             if (title.Length is 0 or > 120)
                 throw new InvalidOperationException("Enter a title between 1 and 120 characters.");
 
             var next = new Dictionary<Guid, LoreEntry>(current);
-            var links = draft.Links.Where(id => id != draft.Id && next.ContainsKey(id)).Distinct().ToArray();
+            NoteCategory? category = null;
+            if (draft.EffectiveCategoryId is { } categoryId)
+            {
+                category = Categories(projectId, session).FirstOrDefault(item => item.Id == categoryId)
+                    ?? throw new InvalidOperationException("Choose a category from this project.");
+            }
+            var links = draft.Links.Where(id => id != draft.Id && next.TryGetValue(id, out var linked)
+                && scope.Contains(linked.CatalogId) && NoteCatalog.CanLink(projectId, linked.CatalogId)).Distinct().ToArray();
             var pictures = draft.Pictures.Concat(uploads.Select(upload => upload.Picture)).ToArray();
             if (pictures.Length > PictureLimit || uploads.Sum(upload => (long)upload.Bytes.Length) > PendingPictureBytes)
                 throw new InvalidOperationException("Too many pictures in this save.");
@@ -145,6 +220,10 @@ public sealed class LoreStore(IWebHostEnvironment environment, IConfiguration co
             var saved = draft with
             {
                 Title = title,
+                ProjectId = projectId,
+                CategoryId = category?.Id,
+                CategoryName = category?.Name,
+                Kind = category?.LegacyKind,
                 Links = links,
                 Pictures = pictures,
                 Updated = updated,
@@ -198,13 +277,13 @@ public sealed class LoreStore(IWebHostEnvironment environment, IConfiguration co
         });
     }
 
-    public void Delete(Guid id, int revision)
+    public void Delete(Guid id, int revision, IReadOnlySet<Guid> scope)
     {
         Run<object?>(session =>
         {
             var catalog = Load(session);
             var current = CurrentEntries(catalog);
-            if (!current.TryGetValue(id, out var original))
+            if (!current.TryGetValue(id, out var original) || !scope.Contains(original.CatalogId))
                 return null;
 
             VerifyRevision(original, revision);
@@ -222,7 +301,7 @@ public sealed class LoreStore(IWebHostEnvironment environment, IConfiguration co
 
             Persist(RecordChanges(catalog, next), session);
             if (session is null)
-                RemoveFile(DraftPath(id));
+                RemoveFile(DraftPath(original.CatalogId, id));
             foreach (var picture in catalog[id].SelectMany(version => version.Entry.Pictures).DistinctBy(picture => picture.Id))
                 RemoveFile(ExistingPicturePath(picture));
             logger.LogInformation("Deleted lore entry {EntryId} with {RevisionCount} revisions.", id, catalog[id].Length);
@@ -288,7 +367,7 @@ public sealed class LoreStore(IWebHostEnvironment environment, IConfiguration co
             }
 
             var links = entry.Links.Where(entries.ContainsKey)
-                .Select(id => new LoreLink(id, entries[id].Kind, entries[id].Title)).ToArray();
+                .Select(id => entries[id].LinkSnapshot()).ToArray();
             next.Add(entry.Id, [.. versions ?? [], new LoreRevision(entry, links)]);
         }
         return next;
@@ -329,6 +408,12 @@ public sealed class LoreStore(IWebHostEnvironment environment, IConfiguration co
     {
         if ((entry?.Revision ?? 0) != revision)
             throw new InvalidOperationException("This entry changed in another tab. Copy any unsaved text you want to keep, then reopen the entry.");
+    }
+
+    private static void RequireAccess(Guid projectId, IReadOnlySet<Guid> scope)
+    {
+        if (!scope.Contains(projectId))
+            throw new InvalidOperationException("This project's notes are unavailable.");
     }
 
     private void RemoveFile(string path)

@@ -1,49 +1,74 @@
 @page "/lore"
 @page "/lore/entry/{EntryId:guid}"
 @page "/lore/entry/{EntryId:guid}/revision/{RevisionNumber:int}"
+@page "/project-notes"
+@page "/project-notes/{NotesProjectId:guid}"
+@page "/project-notes/entry/{EntryId:guid}"
+@page "/project-notes/entry/{EntryId:guid}/revision/{RevisionNumber:int}"
 @attribute [Authorize]
 @layout LoreLayout
 @inject LoreStore Store
 @inject NavigationManager Navigation
 @inject ILogger<Codex> Logger
+@inject AuthenticationStateProvider Authentication
+@inject ProjectNotesWorkspace ProjectNotes
+@inject PlannerStore Planner
+@using HiileikeHome.Components.Planner
+@using System.Security.Claims
 
-<PageTitle>@(Selected?.Title is { } title ? $"{title} · Lore Builder" : "Lore Builder · World Codex")</PageTitle>
+<PageTitle>@(Selected?.Title is { } title ? $"{title} · Project Notes" : "Project Notes")</PageTitle>
 
 <div class="app-shell">
     <aside class="sidebar">
-        <a class="brand" href="/lore">
+        <a class="brand" href="/project-notes">
             <span class="brand-mark"><LoreIcon Name="book" Size="24" /></span>
-            <span><strong>Lore Builder</strong><small>WORLD CODEX</small></span>
+            <span><strong>Project Notes</strong><small>HIILĒIKE HOME</small></span>
         </a>
-        <nav aria-label="Codex categories">
-            <p class="nav-caption">WORKSPACE</p>
-            <a href="/lore" class="@NavClass(null)" aria-current="@(KindFilter is null ? "page" : null)">
-                <LoreIcon Name="grid" Size="17" /><span>All entries</span><small>@entries.Length</small>
+        <nav aria-label="Project Notes">
+            <a href="/project-notes" class="@(project is null && !loading ? "nav-item active" : "nav-item")">
+                <LoreIcon Name="back" Size="17" /><span>All projects</span>
             </a>
-            @foreach (var kind in Kinds)
+            @if (project is { } current)
             {
-                <a href="@($"/lore?kind={kind}")" class="@NavClass(kind)" aria-current="@(KindFilter == kind ? "page" : null)">
-                    <LoreIcon Name="@kind.ToString()" Size="17" /><span>@kind.Plural()</span>
-                    <small>@entries.Count(entry => entry.Kind == kind)</small>
+                <p class="nav-caption">@current.Name</p>
+                <a href="@ProjectUrl(current.Id)" class="@NavClass(null)" aria-current="@(CategoryFilter is null && EntryId is null ? "page" : null)">
+                    <LoreIcon Name="grid" Size="17" /><span>All notes</span><small>@BrowsableEntries.Length</small>
                 </a>
+                @foreach (var (catalogId, category) in VisibleCategories)
+                {
+                    <a href="@ProjectUrl(current.Id, category.Id)" class="@NavClass(category.Id)"
+                       aria-current="@(CategoryFilter?.Id == category.Id && EntryId is null ? "page" : null)">
+                        <LoreIcon Name="@category.IconName" Size="17" />
+                        <span>@category.Name
+                            @if (catalogId != PrimaryCatalog && CatalogProject(catalogId)?.Id != current.Id)
+                            {
+                                <span class="notes-source">@CatalogProject(catalogId)?.Name</span>
+                            }
+                        </span>
+                        <small>@BrowsableEntries.Count(entry => entry.CatalogId == catalogId && entry.EffectiveCategoryId == category.Id)</small>
+                    </a>
+                }
             }
         </nav>
-        <div class="sidebar-foot"><span></span> Private workspace</div>
     </aside>
 
     <div class="workspace">
         <header class="topbar">
             <div class="crumb">
                 <LoreIcon Name="book" Size="16" />
-                <a href="/">Hiileike Home</a>
+                <a href="/planner">Planner</a>
                 <b>/</b>
-                <span>@(EntryId is null ? KindFilter?.Plural() ?? "All entries" : Selected?.Kind.Plural() ?? "Entry")</span>
+                <a href="/project-notes">Project Notes</a>
+                @if (project is { } breadcrumbProject)
+                {
+                    <b>/</b><a href="@ProjectUrl(breadcrumbProject.Id)">@breadcrumbProject.Name</a>
+                }
             </div>
-            @if (editing is null && !quickCapture)
+            @if (project is not null && editing is null && !quickCapture && !loading)
             {
                 <div class="actions topbar-actions">
                     <button class="button" @onclick="() => quickCapture = true">Quick capture</button>
-                    <button class="button primary" @onclick="NewEntry"><LoreIcon Name="plus" Size="18" /> New entry</button>
+                    <button class="button primary" @onclick="NewEntry"><LoreIcon Name="plus" Size="18" /> New note</button>
                 </div>
             }
         </header>
@@ -52,18 +77,24 @@
             {
                 <p class="notice error" role="alert">@error</p>
             }
-            @if (editing is not null)
+            @if (loading)
             {
-                <EntryEditor @key="editing.Id" Entry="editing" Candidates="Candidates" KnownTags="AllTags"
+                <p class="muted" role="status">Loading Project Notes…</p>
+            }
+            else if (editing is not null)
+            {
+                <EntryEditor @key="editing.Id" Entry="editing" Candidates="Candidates" KnownTags="AllTags" Scope="access"
+                             Categories="@CategoriesFor(editing.CatalogId)" ProjectName="@project?.Name"
                              Saved="Saved" Closed="CancelEdit" CatalogChanged="Refresh" />
             }
             else if (quickCapture)
             {
-                <QuickEntry InitialKind="@(KindFilter ?? EntryKind.Item)" Saved="Saved" Cancelled="() => quickCapture = false" />
+                <QuickEntry ProjectId="PrimaryCatalog" InitialCategory="NewNoteCategory" Categories="@CategoriesFor(PrimaryCatalog)"
+                            Scope="access" Saved="Saved" Cancelled="() => quickCapture = false" />
             }
             else if (Selected is { } entry)
             {
-                <a class="back-link" href="@ListUrl"><LoreIcon Name="back" Size="16" /> Back to codex</a>
+                <a class="back-link" href="@ListUrl"><LoreIcon Name="back" Size="16" /> Back to notes</a>
                 @if (historical is not null)
                 {
                     <p class="notice">Viewing revision @entry.Revision. <a class="back-link" href="@EntryUrl(entry.Id)">View current entry</a></p>
@@ -71,8 +102,8 @@
                 <div class="page-title">
                     <div>
                         <div class="detail-type @entry.Kind">
-                            <span class="kind-chip"><LoreIcon Name="@entry.Kind.ToString()" Size="19" /></span>
-                            <span class="eyebrow">@entry.Kind</span>
+                            <span class="kind-chip"><LoreIcon Name="@entry.IconName" Size="19" /></span>
+                            <span class="eyebrow">@(historical is null ? DisplayCategory(entry) : entry.CategoryLabel)</span>
                             <span class="status @entry.Status">@entry.Status.Label()</span>
                             @if (entry.Pinned)
                             {
@@ -87,13 +118,13 @@
                     </div>
                     @if (historical is null)
                     {
-                        <button class="button" @onclick="() => Edit(entry)"><LoreIcon Name="edit" Size="17" /> Edit entry</button>
+                        <button class="button" @onclick="() => Edit(entry)"><LoreIcon Name="edit" Size="17" /> Edit note</button>
                     }
                 </div>
                 <div class="detail-grid">
                     <div class="stack">
                         <section class="panel note-panel">
-                            <h2>Lore &amp; ideas</h2>
+                            <h2>Notes &amp; ideas</h2>
                             <NoteText Value="@entry.Notes" />
                         </section>
                         <section class="panel note-panel">
@@ -134,20 +165,24 @@
                                 if (entries.Any(other => other.Id == link.Id))
                                 {
                                     <a class="related @link.Kind" href="@EntryUrl(link.Id)">
-                                        <span class="kind-chip"><LoreIcon Name="@link.Kind.ToString()" Size="16" /></span>
-                                        <span><strong>@link.Title</strong><small>@link.Kind</small></span>
+                                        <span class="kind-chip"><LoreIcon Name="@link.IconName" Size="16" /></span>
+                                        <span><strong>@link.Title</strong><small>@link.CategoryLabel</small></span>
                                         <LoreIcon Name="arrow" Size="16" />
                                     </a>
                                 }
                                 else
                                 {
                                     <div class="related @link.Kind">
-                                        <span class="kind-chip"><LoreIcon Name="@link.Kind.ToString()" Size="16" /></span>
-                                        <span><strong>@link.Title</strong><small>@link.Kind · Deleted</small></span>
+                                        <span class="kind-chip"><LoreIcon Name="@link.IconName" Size="16" /></span>
+                                        <span><strong>@link.Title</strong><small>@link.CategoryLabel · Deleted</small></span>
                                     </div>
                                 }
                             }
                         </section>
+                        @if (historical is null)
+                        {
+                            <LoreTaskLinks @key="entry.Id" EntryId="entry.Id" />
+                        }
                         <section class="panel note-panel">
                             <h2>Revision history <small>@revisions.Length</small></h2>
                             <nav class="revision-list" aria-label="Entry revisions">
@@ -211,20 +246,44 @@
                     }
                     else
                     {
-                        <h1>Entry unavailable</h1>
-                        <p class="muted">This entry could not be found in the codex.</p>
-                        <a class="button" href="@ListUrl">Back to codex</a>
+                        <h1>Note unavailable</h1>
+                        <p class="muted">This note could not be found in Project Notes.</p>
+                        <a class="button" href="@ListUrl">Back to notes</a>
                     }
                 </div>
+            }
+            else if (project is null)
+            {
+                <div class="page-title">
+                    <div><h1>@(NotesProjectId is null ? "Project Notes" : "Project unavailable")</h1></div>
+                    <a class="button" href="/planner/projects">Manage projects</a>
+                </div>
+                @if (workspace.Projects.Count == 0)
+                {
+                    <p class="muted">Create a project to start taking notes.</p>
+                }
+                else
+                {
+                    <div class="panel notes-project-list">
+                        @foreach (var (item, depth) in workspace.ProjectTree())
+                        {
+                            <a class="related" href="@ProjectUrl(item.Id)" style="@($"--notes-depth: {Math.Min(depth, 5)}")">
+                                <LoreIcon Name="book" Size="18" />
+                                <span><strong>@item.Name</strong></span>
+                                <LoreIcon Name="arrow" Size="16" />
+                            </a>
+                        }
+                    </div>
+                }
             }
             else
             {
                 var visibleEntries = VisibleEntries;
                 <section class="hero">
                     <div>
-                        <p class="eyebrow"><span></span> YOUR WORLD, IN PROGRESS</p>
-                        <h1>@(KindFilter?.Plural() ?? "World Codex")</h1>
-                        <p>A place for the people, places, quests, and things that make up your game.</p>
+                        <p class="eyebrow"><span></span> PROJECT NOTES</p>
+                        <h1>@project.Name</h1>
+                        <a class="back-link" href="@($"/planner/projects/{project.Id}")">View project <LoreIcon Name="arrow" Size="15" /></a>
                     </div>
                     <div class="hero-emblem" aria-hidden="true">
                         <svg viewBox="0 0 230 170" fill="none">
@@ -241,12 +300,60 @@
 
                 <section class="browser" aria-labelledby="entries-heading">
                     <div class="list-heading">
-                        <div><h2 id="entries-heading">@(KindFilter?.Plural() ?? "All entries")</h2><span class="count">@visibleEntries.Length</span></div>
+                        <div><h2 id="entries-heading">@(CategoryFilter?.Name ?? "All notes")</h2><span class="count">@visibleEntries.Length</span></div>
                         @if (HasFilters)
                         {
                             <button class="button small" @onclick="ResetFilters">Clear filters</button>
                         }
                     </div>
+                    <div class="notes-options actions">
+                        @if (workspace.Children(project.Id).Any())
+                        {
+                            <label class="checkbox">
+                                <input type="checkbox" checked="@project.IncludeSubprojectNotes" @onchange="ToggleSubprojects" disabled="@savingSettings" />
+                                Include subproject notes
+                            </label>
+                        }
+                        <button type="button" class="button small" aria-expanded="@manageCategories" @onclick="ToggleCategories">Manage categories</button>
+                    </div>
+                    @if (VisibleCategories.Any())
+                    {
+                        <label class="notes-mobile-category">
+                            <span>Category</span>
+                            <select value="@CategoryFilter?.Id" @onchange="NavigateCategory">
+                                <option value="">All categories</option>
+                                @foreach (var (catalogId, category) in VisibleCategories)
+                                {
+                                    var owner = CatalogProject(catalogId);
+                                    <option value="@category.Id">@(owner is not null && owner.Id != project.Id
+                                        ? $"{category.Name} · {owner.Name}" : category.Name)</option>
+                                }
+                            </select>
+                        </label>
+                    }
+                    @if (manageCategories)
+                    {
+                        <form class="panel edit-section notes-categories" aria-label="Manage categories"
+                              @onsubmit="SaveCategory" @onsubmit:preventDefault>
+                            <p class="muted">Categories for @project.Name</p>
+                            <div class="field-grid">
+                                <label>Category to edit
+                                    <select @bind="categoryToEdit" @bind:after="ChooseCategory">
+                                        <option value="">New category</option>
+                                        @foreach (var category in CategoriesFor(PrimaryCatalog))
+                                        {
+                                            <option value="@category.Id">@category.Name</option>
+                                        }
+                                    </select>
+                                </label>
+                                <label>Category name <input required maxlength="64" @bind="categoryName" /></label>
+                            </div>
+                            <div class="actions">
+                                <button type="submit" class="button primary">@(categoryToEdit is null ? "Add category" : "Save category")</button>
+                                <button type="button" class="button" @onclick="ToggleCategories">Close</button>
+                            </div>
+                        </form>
+                    }
                     <div class="filters">
                         <div class="search">
                             <LoreIcon Name="search" Size="19" />
@@ -278,7 +385,8 @@
                         <div class="entry-grid">
                             @foreach (var item in visibleEntries)
                             {
-                                <EntryCard @key="item.Id" Entry="item" Href="@EntryUrl(item.Id)" />
+                                <EntryCard @key="item.Id" Entry="item" Href="@EntryUrl(item.Id)"
+                                           ProjectName="@(CatalogProject(item.CatalogId) is { } owner && owner.Id != project.Id ? owner.Name : null)" />
                             }
                         </div>
                     }
@@ -286,8 +394,8 @@
                     {
                         <div class="panel empty">
                             <span class="empty-icon"><LoreIcon Name="book" Size="28" /></span>
-                            <h3>@(HasFilters ? "No entries match these filters" : "Nothing here yet")</h3>
-                            <p class="muted">@(HasFilters ? "Try a different search or clear the filters." : "Add an idea and give it a place in your world.")</p>
+                            <h3>@(HasFilters ? "No notes match these filters" : "No notes here yet")</h3>
+                            <p class="muted">@(HasFilters ? "Try a different search or clear the filters." : $"Add a note to {project.Name}.")</p>
                             <div class="actions">
                                 @if (HasFilters)
                                 {
@@ -295,7 +403,7 @@
                                 }
                                 else
                                 {
-                                    <button class="button primary" @onclick="NewEntry"><LoreIcon Name="plus" Size="18" /> Create an entry</button>
+                                    <button class="button primary" @onclick="NewEntry"><LoreIcon Name="plus" Size="18" /> Create a note</button>
                                 }
                             </div>
                         </div>
@@ -303,36 +411,56 @@
                 </section>
             }
         </main>
-        <footer class="workspace-foot">Lore Builder <span>·</span> A personal game development codex</footer>
     </div>
 </div>
 
 @code {
     [Parameter] public Guid? EntryId { get; set; }
     [Parameter] public int? RevisionNumber { get; set; }
+    [Parameter] public Guid? NotesProjectId { get; set; }
     [SupplyParameterFromQuery(Name = "kind")] public string? KindQueryValue { get; set; }
+    [SupplyParameterFromQuery(Name = "category")] public string? NoteCategoryId { get; set; }
 
-    private static readonly EntryKind[] Kinds = Enum.GetValues<EntryKind>();
+    private PlannerWorkspace workspace = new();
+    private PlannerProject? project;
+    private ClaimsPrincipal user = new();
+    private IReadOnlySet<Guid> access = new HashSet<Guid>();
+    private IReadOnlySet<Guid> visibleCatalogs = new HashSet<Guid>();
+    private Dictionary<Guid, NoteCategory[]> categories = [];
     private LoreEntry[] entries = [];
     private LoreRevision[] revisions = [];
     private LoreRevision? historical;
     private LoreEntry? editing;
-    private bool quickCapture;
+    private bool quickCapture, loading, manageCategories, savingSettings;
     private string? error;
+    private Guid? categoryToEdit;
+    private string categoryName = "";
+    private string? expectedCategoryName;
     private string search = "";
     private string statusFilter = "";
     private string tagFilter = "";
     private string sort = "recent";
     private bool confirmDelete;
 
-    private EntryKind? KindFilter => Enum.TryParse<EntryKind>(KindQueryValue, out var kind) && kind.ToString() == KindQueryValue && Enum.IsDefined(kind) ? kind : null;
-    private string KindQuery => KindFilter is { } kind ? $"?kind={kind}" : "";
-    private string ListUrl => $"/lore{KindQuery}";
+    private Guid PrimaryCatalog => project is null ? Guid.Empty : ProjectNotesWorkspace.PrimaryCatalog(project);
+    private LoreEntry[] BrowsableEntries => entries.Where(entry => visibleCatalogs.Contains(entry.CatalogId)).ToArray();
+    private IEnumerable<(Guid CatalogId, NoteCategory Category)> VisibleCategories => visibleCatalogs
+        .OrderBy(id => id != PrimaryCatalog).ThenBy(id => CatalogProject(id)?.Name, StringComparer.OrdinalIgnoreCase)
+        .SelectMany(id => CategoriesFor(id).Select(category => (id, category)));
+    private NoteCategory? CategoryFilter => VisibleCategories.Select(item => item.Category)
+        .FirstOrDefault(category => category.Id == RequestedCategory);
+    private Guid? RequestedCategory => Guid.TryParse(NoteCategoryId, out var id) ? id : LegacyCategoryFilter;
+    private Guid? LegacyCategoryFilter => visibleCatalogs.Contains(NoteCatalog.LegacyId)
+        && Enum.TryParse<EntryKind>(KindQueryValue, out var kind) ? NoteCatalog.LegacyCategory(kind)?.Id : null;
+    private string CategoryQuery => CategoryFilter is { } category ? $"?category={category.Id}" : "";
+    private Guid? NewNoteCategory => CategoriesFor(PrimaryCatalog).Any(item => item.Id == CategoryFilter?.Id) ? CategoryFilter?.Id : null;
+    private string ListUrl => project is null ? "/project-notes" : ProjectUrl(project.Id, CategoryFilter?.Id);
     private LoreEntry? Selected => RevisionNumber is null
         ? revisions.LastOrDefault()?.Entry : historical?.Entry;
-    private LoreEntry[] Candidates => entries.Where(entry => entry.Id != editing?.Id).ToArray();
+    private LoreEntry[] Candidates => editing is null ? [] : entries.Where(entry => entry.Id != editing.Id
+        && NoteCatalog.CanLink(editing.CatalogId, entry.CatalogId)).ToArray();
     private bool HasFilters => search.Trim().Length > 0 || statusFilter.Length > 0 || tagFilter.Length > 0;
-    private IEnumerable<string> AllTags => entries.SelectMany(entry => entry.Tags)
+    private IEnumerable<string> AllTags => BrowsableEntries.SelectMany(entry => entry.Tags)
         .Distinct(StringComparer.OrdinalIgnoreCase).Order(StringComparer.OrdinalIgnoreCase);
 
     private LoreEntry[] VisibleEntries
@@ -340,8 +468,9 @@
         get
         {
             var terms = search.Split(' ', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
-            var filtered = entries.Where(entry =>
-                (KindFilter is null || entry.Kind == KindFilter)
+            var category = CategoryFilter;
+            var filtered = BrowsableEntries.Where(entry =>
+                (category is null || entry.EffectiveCategoryId == category.Id)
                 && (statusFilter.Length == 0 || entry.Status.ToString() == statusFilter)
                 && (tagFilter.Length == 0 || entry.Tags.Contains(tagFilter, StringComparer.OrdinalIgnoreCase))
                 && terms.All(term => Matches(entry, term)));
@@ -355,13 +484,35 @@
         }
     }
 
-    protected override void OnParametersSet()
+    protected override async Task OnParametersSetAsync()
     {
         editing = null;
         quickCapture = false;
         confirmDelete = false;
+        manageCategories = false;
         error = null;
-        Refresh();
+        loading = true;
+        try
+        {
+            user = (await Authentication.GetAuthenticationStateAsync()).User;
+            workspace = await ProjectNotes.ReadAsync(user);
+            access = ProjectNotesWorkspace.CatalogIds(workspace.Projects);
+            Refresh();
+        }
+        catch (Exception ex) when (IsStorageError(ex) || ex is PlannerValidationException)
+        {
+            project = null;
+            entries = [];
+            revisions = [];
+            historical = null;
+            workspace = new();
+            Logger.LogError(ex, "Could not load the projects for Project Notes");
+            error = "Project Notes could not load the project list. Reload to try again.";
+        }
+        finally
+        {
+            loading = false;
+        }
     }
 
     private static bool Matches(LoreEntry entry, string term) =>
@@ -369,41 +520,76 @@
         || entry.Summary.Contains(term, StringComparison.OrdinalIgnoreCase)
         || entry.Notes.Contains(term, StringComparison.OrdinalIgnoreCase)
         || entry.Implementation.Contains(term, StringComparison.OrdinalIgnoreCase)
+        || entry.CategoryLabel.Contains(term, StringComparison.OrdinalIgnoreCase)
         || entry.Tags.Any(tag => tag.Contains(term, StringComparison.OrdinalIgnoreCase));
 
-    private string NavClass(EntryKind? kind) => KindFilter == kind ? "nav-item active" : "nav-item";
+    private string NavClass(Guid? category) => CategoryFilter?.Id == category
+        ? "nav-item notes-category-nav active" : "nav-item notes-category-nav";
 
-    private string EntryUrl(Guid id) => $"/lore/entry/{id}{KindQuery}";
+    private static string ProjectUrl(Guid id, Guid? category = null) =>
+        category is { } filter ? $"/project-notes/{id}?category={filter}" : $"/project-notes/{id}";
 
-    private string RevisionUrl(Guid id, int revision) => $"/lore/entry/{id}/revision/{revision}{KindQuery}";
+    private void NavigateCategory(ChangeEventArgs args)
+    {
+        if (project is { } current)
+            Navigation.NavigateTo(ProjectUrl(current.Id, Guid.TryParse(args.Value?.ToString(), out var id) ? id : null));
+    }
+
+    private string EntryUrl(Guid id) => $"/project-notes/entry/{id}{CategoryQuery}";
+    private string RevisionUrl(Guid id, int revision) => $"/project-notes/entry/{id}/revision/{revision}{CategoryQuery}";
 
     private LoreLink[] VisibleLinks(LoreEntry entry) => (historical?.Links
         ?? entries.Where(other => entry.Links.Contains(other.Id))
-            .Select(other => new LoreLink(other.Id, other.Kind, other.Title)))
+            .Select(other => other.LinkSnapshot()))
         .OrderBy(link => link.Title, StringComparer.OrdinalIgnoreCase).ToArray();
 
     private void ResetFilters() => search = statusFilter = tagFilter = "";
+
+    private PlannerProject? CatalogProject(Guid id) => ProjectNotesWorkspace.FindProject(workspace, id);
+    private NoteCategory[] CategoriesFor(Guid id) => categories.GetValueOrDefault(id) ?? [];
+    private string DisplayCategory(LoreEntry entry) => CategoriesFor(entry.CatalogId)
+        .FirstOrDefault(category => category.Id == entry.EffectiveCategoryId)?.Name ?? entry.CategoryLabel;
+
+    private void UpdateVisibleCatalogs()
+    {
+        visibleCatalogs = project is null ? new HashSet<Guid>() : ProjectNotesWorkspace.CatalogIds(
+            project.IncludeSubprojectNotes
+                ? workspace.ProjectTree(project.Id).Select(item => item.Project).Prepend(project)
+                : [project]);
+    }
 
     private void Refresh()
     {
         try
         {
-            (entries, revisions) = Store.Snapshot(EntryId);
+            categories = Store.Categories(access);
+            (entries, revisions) = Store.Snapshot(EntryId, access);
+            entries = entries.Select(entry => entry with { CategoryName = DisplayCategory(entry) }).ToArray();
             historical = revisions.FirstOrDefault(version => version.Entry.Revision == RevisionNumber);
+            project = EntryId is not null
+                ? revisions.LastOrDefault() is { } current ? CatalogProject(current.Entry.CatalogId) : null
+                : NotesProjectId is { } id ? workspace.Project(id)
+                : Navigation.ToBaseRelativePath(Navigation.Uri).Split('?')[0].TrimEnd('/').Equals("lore", StringComparison.OrdinalIgnoreCase)
+                    ? workspace.Projects.FirstOrDefault(item => item.IncludesLegacyNotes)
+                    : null;
+            UpdateVisibleCatalogs();
             if (tagFilter.Length > 0)
                 tagFilter = AllTags.FirstOrDefault(tag => tag.Equals(tagFilter, StringComparison.OrdinalIgnoreCase)) ?? "";
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Text.Json.JsonException)
+        catch (Exception ex) when (IsStorageError(ex))
         {
             entries = [];
             revisions = [];
             historical = null;
-            Logger.LogError(ex, "Could not read the lore catalog.");
-            error = "The lore catalog could not be read. Check the data directory and reload this page.";
+            Logger.LogError(ex, "Could not read Project Notes.");
+            error = "Project Notes could not be read. Check the data directory and reload this page.";
         }
     }
 
-    private void NewEntry() => Edit(LoreEntry.New(KindFilter ?? EntryKind.Item));
+    private static bool IsStorageError(Exception ex) => ex is IOException or UnauthorizedAccessException
+        or System.Text.Json.JsonException or System.Data.Common.DbException;
+
+    private void NewEntry() => Edit(LoreEntry.New(PrimaryCatalog, NewNoteCategory));
 
     private void Edit(LoreEntry entry)
     {
@@ -431,17 +617,81 @@
         error = null;
         try
         {
-            Store.Delete(entry.Id, entry.Revision);
+            Store.Delete(entry.Id, entry.Revision, access);
             Navigation.NavigateTo(ListUrl);
         }
         catch (InvalidOperationException ex)
         {
             error = ex.Message;
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        catch (Exception ex) when (IsStorageError(ex))
         {
             Logger.LogError(ex, "Could not delete lore entry {EntryId}.", entry.Id);
             error = "The entry could not be deleted.";
+        }
+    }
+
+    private void ToggleCategories()
+    {
+        manageCategories = !manageCategories;
+        categoryToEdit = null;
+        ChooseCategory();
+    }
+
+    private void ChooseCategory()
+    {
+        expectedCategoryName = CategoriesFor(PrimaryCatalog).FirstOrDefault(category => category.Id == categoryToEdit)?.Name;
+        categoryName = expectedCategoryName ?? "";
+    }
+
+    private void SaveCategory()
+    {
+        error = null;
+        try
+        {
+            Store.SaveCategory(PrimaryCatalog, categoryToEdit, categoryName, expectedCategoryName, access);
+            Refresh();
+            categoryToEdit = null;
+            ChooseCategory();
+        }
+        catch (InvalidOperationException ex)
+        {
+            error = ex.Message;
+        }
+        catch (Exception ex) when (IsStorageError(ex))
+        {
+            Logger.LogError(ex, "Could not save the Project Notes category.");
+            error = "The category could not be saved.";
+        }
+    }
+
+    private async Task ToggleSubprojects(ChangeEventArgs args)
+    {
+        if (project is null || savingSettings)
+            return;
+
+        var id = project.Id;
+        var include = args.Value is true;
+        error = null;
+        savingSettings = true;
+        try
+        {
+            workspace = await Planner.ChangeAsync(user, state =>
+            {
+                var current = state.Project(id) ?? throw new PlannerValidationException("This project is unavailable.");
+                state.SaveProject(current with { IncludeSubprojectNotes = include }, PlannerCalendar.Today);
+            });
+            project = workspace.Project(id);
+            UpdateVisibleCatalogs();
+        }
+        catch (Exception ex) when (IsStorageError(ex) || ex is PlannerValidationException)
+        {
+            Logger.LogError(ex, "Could not update subproject note visibility.");
+            error = "The subproject notes setting could not be saved.";
+        }
+        finally
+        {
+            savingSettings = false;
         }
     }
 }
