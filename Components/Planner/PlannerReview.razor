@@ -96,12 +96,17 @@
             @foreach (var checkpoint in checkpoints)
             {
                 var project = Workspace.Project(checkpoint.ProjectId)!;
-                var value = Workspace.ProgressAt(project.Id, end < Today ? end : Today);
+                var progress = Workspace.CheckpointProgress(checkpoint, end < Today ? end : Today);
+                var reached = progress?.Value >= checkpoint.Target;
                 <a class="planner-project-meter" href="@($"/planner/projects/{project.Id}")">
-                    <span><strong>@project.Name</strong><small class="@(value >= checkpoint.Target ? "goal-met" : "planner-muted")">
-                        @(value >= checkpoint.Target ? "Reached" : week < currentWeek ? "Missed" : "Open")
+                    <span><strong>@project.Name</strong><small class="@(reached ? "goal-met" : "planner-muted")">
+                        @(progress is null ? "History unavailable" : reached ? "Reached" : week < currentWeek ? "Missed"
+                            : checkpoint.UsesCurrentMetric(project) ? "Open" : "Previous metric")
                     </small></span>
-                    <PlannerProgress Progress="@(new ProjectProgress(value, checkpoint.Target, checkpoint.Unit))" Label="@project.Name" />
+                    @if (progress is { } result)
+                    {
+                        <PlannerProgress Progress="result" Label="@project.Name" />
+                    }
                 </a>
             }
         }
@@ -198,7 +203,9 @@
     private async Task ApplyReview(PlannerTask task)
     {
         var destination = deferUntil is { } date ? PlannerCalendar.WeekOf(date) : (DateOnly?)null;
-        if (await Save(state => state.Review(task, week, action, destination, steps, note, Today), "Review decision saved.") is not null)
+        var (submittedWeek, submittedAction, submittedSteps, submittedNote, today) = (week, action, steps, note, Today);
+        if (await Save(state => state.Review(task, submittedWeek, submittedAction, destination, submittedSteps, submittedNote, today),
+            "Review decision saved.") is not null && selectedTask == task.Id && week == submittedWeek)
             Reset();
     }
 }

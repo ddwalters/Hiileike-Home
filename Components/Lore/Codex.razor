@@ -40,7 +40,11 @@
                        aria-current="@(CategoryFilter?.Id == category.Id && EntryId is null ? "page" : null)">
                         <LoreIcon Name="@category.IconName" Size="17" />
                         <span>@category.Name
-                            @if (catalogId != PrimaryCatalog && CatalogProject(catalogId)?.Id != current.Id)
+                            @if (catalogId == NoteCatalog.LegacyId)
+                            {
+                                <span class="notes-source">Migrated</span>
+                            }
+                            else if (CatalogProject(catalogId)?.Id != current.Id)
                             {
                                 <span class="notes-source">@CatalogProject(catalogId)?.Name</span>
                             }
@@ -104,6 +108,10 @@
                         <div class="detail-type @entry.Kind">
                             <span class="kind-chip"><LoreIcon Name="@entry.IconName" Size="19" /></span>
                             <span class="eyebrow">@(historical is null ? DisplayCategory(entry) : entry.CategoryLabel)</span>
+                            @if (entry.CatalogId == NoteCatalog.LegacyId)
+                            {
+                                <small class="muted">Shared legacy note</small>
+                            }
                             <span class="status @entry.Status">@entry.Status.Label()</span>
                             @if (entry.Pinned)
                             {
@@ -315,6 +323,10 @@
                             </label>
                         }
                         <button type="button" class="button small" aria-expanded="@manageCategories" @onclick="ToggleCategories">Manage categories</button>
+                        @if (hasMigratedDraft)
+                        {
+                            <button type="button" class="button small" @onclick="RecoverMigratedDraft">Recover migrated draft</button>
+                        }
                     </div>
                     @if (VisibleCategories.Any())
                     {
@@ -325,8 +337,8 @@
                                 @foreach (var (catalogId, category) in VisibleCategories)
                                 {
                                     var owner = CatalogProject(catalogId);
-                                    <option value="@category.Id">@(owner is not null && owner.Id != project.Id
-                                        ? $"{category.Name} · {owner.Name}" : category.Name)</option>
+                                    <option value="@category.Id">@(catalogId == NoteCatalog.LegacyId ? $"{category.Name} · Migrated"
+                                        : owner is not null && owner.Id != project.Id ? $"{category.Name} · {owner.Name}" : category.Name)</option>
                                 }
                             </select>
                         </label>
@@ -343,6 +355,13 @@
                                         @foreach (var category in CategoriesFor(PrimaryCatalog))
                                         {
                                             <option value="@category.Id">@category.Name</option>
+                                        }
+                                        @if (project.IncludesLegacyNotes)
+                                        {
+                                            @foreach (var category in CategoriesFor(NoteCatalog.LegacyId))
+                                            {
+                                                <option value="@category.Id">@category.Name · Migrated</option>
+                                            }
                                         }
                                     </select>
                                 </label>
@@ -431,7 +450,7 @@
     private LoreRevision[] revisions = [];
     private LoreRevision? historical;
     private LoreEntry? editing;
-    private bool quickCapture, loading, manageCategories, savingSettings;
+    private bool quickCapture, loading, manageCategories, savingSettings, hasMigratedDraft;
     private string? error;
     private Guid? categoryToEdit;
     private string categoryName = "";
@@ -442,7 +461,9 @@
     private string sort = "recent";
     private bool confirmDelete;
 
-    private Guid PrimaryCatalog => project is null ? Guid.Empty : ProjectNotesWorkspace.PrimaryCatalog(project);
+    private Guid PrimaryCatalog => project?.Id ?? Guid.Empty;
+    private Guid CategoryCatalog => project?.IncludesLegacyNotes == true && categoryToEdit is { } id
+        && CategoriesFor(NoteCatalog.LegacyId).Any(item => item.Id == id) ? NoteCatalog.LegacyId : PrimaryCatalog;
     private LoreEntry[] BrowsableEntries => entries.Where(entry => visibleCatalogs.Contains(entry.CatalogId)).ToArray();
     private IEnumerable<(Guid CatalogId, NoteCategory Category)> VisibleCategories => visibleCatalogs
         .OrderBy(id => id != PrimaryCatalog).ThenBy(id => CatalogProject(id)?.Name, StringComparer.OrdinalIgnoreCase)
@@ -573,6 +594,7 @@
                     ? workspace.Projects.FirstOrDefault(item => item.IncludesLegacyNotes)
                     : null;
             UpdateVisibleCatalogs();
+            hasMigratedDraft = EntryId is null && project?.IncludesLegacyNotes == true && MigratedDraftExists();
             if (tagFilter.Length > 0)
                 tagFilter = AllTags.FirstOrDefault(tag => tag.Equals(tagFilter, StringComparison.OrdinalIgnoreCase)) ?? "";
         }
@@ -588,6 +610,19 @@
 
     private static bool IsStorageError(Exception ex) => ex is IOException or UnauthorizedAccessException
         or System.Text.Json.JsonException or System.Data.Common.DbException;
+
+    private bool MigratedDraftExists()
+    {
+        try
+        {
+            return Store.LoadDraft(NoteCatalog.LegacyId, Guid.Empty, access) is not null;
+        }
+        catch (Exception ex) when (IsStorageError(ex))
+        {
+            Logger.LogWarning(ex, "Could not check for the migrated draft.");
+            return false;
+        }
+    }
 
     private void NewEntry() => Edit(LoreEntry.New(PrimaryCatalog, NewNoteCategory));
 
@@ -640,7 +675,7 @@
 
     private void ChooseCategory()
     {
-        expectedCategoryName = CategoriesFor(PrimaryCatalog).FirstOrDefault(category => category.Id == categoryToEdit)?.Name;
+        expectedCategoryName = CategoriesFor(CategoryCatalog).FirstOrDefault(category => category.Id == categoryToEdit)?.Name;
         categoryName = expectedCategoryName ?? "";
     }
 
@@ -649,7 +684,7 @@
         error = null;
         try
         {
-            Store.SaveCategory(PrimaryCatalog, categoryToEdit, categoryName, expectedCategoryName, access);
+            Store.SaveCategory(CategoryCatalog, categoryToEdit, categoryName, expectedCategoryName, access);
             Refresh();
             categoryToEdit = null;
             ChooseCategory();
@@ -662,6 +697,24 @@
         {
             Logger.LogError(ex, "Could not save the Project Notes category.");
             error = "The category could not be saved.";
+        }
+    }
+
+    private void RecoverMigratedDraft()
+    {
+        error = null;
+        try
+        {
+            Edit(Store.CopyLegacyDraft(PrimaryCatalog, access));
+        }
+        catch (InvalidOperationException ex)
+        {
+            error = ex.Message;
+        }
+        catch (Exception ex) when (IsStorageError(ex))
+        {
+            Logger.LogError(ex, "Could not recover the migrated draft.");
+            error = "The migrated draft could not be recovered.";
         }
     }
 

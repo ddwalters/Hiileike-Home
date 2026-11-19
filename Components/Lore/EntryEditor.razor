@@ -104,9 +104,12 @@ else
             <section class="panel edit-section">
                 <h2><LoreIcon Name="link" /> Linked entries</h2>
                 <small class="muted">Links appear on both entries.</small>
-                <button type="button" class="button small" @onclick="() => linkedCapture = true" disabled="@linkedCapture">
-                    <LoreIcon Name="plus" Size="16" /> Create linked entry
-                </button>
+                @if (Entry.CatalogId != NoteCatalog.LegacyId)
+                {
+                    <button type="button" class="button small" @onclick="() => linkedCapture = true" disabled="@linkedCapture">
+                        <LoreIcon Name="plus" Size="16" /> Create linked note
+                    </button>
+                }
                 @if (Candidates.Count == 0)
                 {
                     <p class="muted">Create another entry to link it here.</p>

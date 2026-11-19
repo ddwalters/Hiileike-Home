@@ -64,7 +64,7 @@ else
                 </select>
             </label>
             <label>Weekly priority
-                <select @bind="priority" disabled="@(week is null || status == PlannerStatus.Archived)">
+                <select @bind="priority" disabled="@(week is null || status is not (PlannerStatus.Open or PlannerStatus.InProgress))">
                     <option value="0">None</option>
                     <option value="1">1 · Highest</option>
                     <option value="2">2</option>
@@ -186,7 +186,7 @@ else
     private void SetDraft(PlannerTask task)
     {
         (title, notes, projectId, milestoneId, due, week, priority, status) =
-            (task.Title, task.Notes, task.ProjectId, task.MilestoneId, task.Due, task.Week, task.Priority, task.Status);
+            (task.Title, task.Notes, task.ProjectId, task.MilestoneId, task.Due, task.Week, task.IsOpen ? task.Priority : 0, task.Status);
         links = [.. task.LoreIds];
         hidden = task.HiddenFromDashboard;
         draft = task;

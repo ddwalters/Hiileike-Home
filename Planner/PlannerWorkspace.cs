@@ -7,7 +7,8 @@ public enum ReviewAction { Continue, Defer, BreakDown }
 
 public sealed record PlannerProject(Guid Id, string Name, string Notes, ProgressMeasure Measure,
     string Unit, int Target, int Value, int Revision, Guid? ParentId = null, bool HiddenFromDashboard = false,
-    bool IncludeSubprojectNotes = false, bool IncludesLegacyNotes = false);
+    bool IncludeSubprojectNotes = false, bool IncludesLegacyNotes = false, Guid? NumericMetricId = null,
+    string? LegacyNumericUnit = null);
 
 public sealed record PlannerMilestone(Guid Id, Guid ProjectId, string Title, DateOnly? Due, bool Done, int Revision,
     bool HiddenFromDashboard = false);
@@ -33,9 +34,13 @@ public sealed record PlannerTask(Guid Id, string Title, string Notes, Guid? Proj
 
 public sealed record TaskCompletion(Guid TaskId, string Title, DateOnly Day);
 public sealed record ReviewDecision(Guid TaskId, string Title, DateOnly Week, ReviewAction Action,
-    DateOnly? Destination, string[] Steps, string Note);
-public sealed record ProgressUpdate(Guid ProjectId, DateOnly Day, int Value);
-public sealed record ReadingCheckpoint(Guid ProjectId, DateOnly Week, int Target, string Unit);
+    DateOnly? Destination, string[] Steps, string Note, int? SourceRevision = null);
+public sealed record ProgressUpdate(Guid ProjectId, DateOnly Day, int Value, Guid? MetricId = null);
+public sealed record ReadingCheckpoint(Guid ProjectId, DateOnly Week, int Target, string Unit, Guid? MetricId = null)
+{
+    public bool UsesCurrentMetric(PlannerProject project) => project.Measure == ProgressMeasure.Numeric
+        && MetricId == project.NumericMetricId && Unit.Equals(project.Unit, StringComparison.OrdinalIgnoreCase);
+}
 
 public readonly record struct ProjectProgress(int Value, int Target, string Unit, string? Detail = null)
 {
@@ -135,16 +140,22 @@ public sealed class PlannerWorkspace
             || Ancestors(parentId).Any(parent => parent.Id == draft.Id)))
             throw new PlannerValidationException("Choose a parent outside this project's own subprojects.");
 
+        var numeric = draft.Measure == ProgressMeasure.Numeric;
+        var unit = numeric ? Text(draft.Unit, 32, "Unit", required: true) : "";
+        var sameMetric = numeric && existing is { Measure: ProgressMeasure.Numeric }
+            && existing.Unit.Equals(unit, StringComparison.OrdinalIgnoreCase);
         var project = draft with
         {
             Name = name,
             Notes = notes,
-            Unit = draft.Measure == ProgressMeasure.Numeric ? Text(draft.Unit, 32, "Unit", required: true) : "",
+            Unit = unit,
+            NumericMetricId = numeric ? sameMetric ? existing!.NumericMetricId : Guid.NewGuid() : null,
+            LegacyNumericUnit = existing?.LegacyNumericUnit
+                ?? (existing is { Measure: ProgressMeasure.Numeric, NumericMetricId: null } ? existing.Unit : null),
             Revision = draft.Revision + 1
         };
-        if (project.Measure == ProgressMeasure.Numeric
-            && (existing?.Measure != ProgressMeasure.Numeric || existing.Value != project.Value))
-            ProgressUpdates.Add(new(project.Id, today, project.Value));
+        if (numeric && (!sameMetric || existing!.Value != project.Value))
+            ProgressUpdates.Add(new(project.Id, today, project.Value, project.NumericMetricId));
 
         if (existing is not null)
             Projects[Projects.IndexOf(existing)] = project;
@@ -185,19 +196,19 @@ public sealed class PlannerWorkspace
             throw new PlannerValidationException("Choose a milestone from the selected project.");
         if (draft.Week is { } week && week != PlannerCalendar.WeekOf(week))
             throw new PlannerValidationException("Choose a week that starts on Monday.");
-        if (draft.Priority != 0 && draft.Week is null)
+        var priority = draft.IsOpen ? draft.Priority : 0;
+        if (priority != 0 && draft.Week is null)
             throw new PlannerValidationException("Schedule this task before assigning a priority.");
-        if (draft.Priority != 0 && draft.Status != PlannerStatus.Archived && Tasks.Any(item =>
-            item.Id != draft.Id && item.Week == draft.Week && item.Priority == draft.Priority
-            && item.Status is not (PlannerStatus.Archived or PlannerStatus.Replaced)))
-            throw new PlannerValidationException($"Priority {draft.Priority} is already assigned for that week.");
+        if (priority != 0 && Tasks.Any(item => item.IsOpen && item.Id != draft.Id
+            && item.Week == draft.Week && item.Priority == priority))
+            throw new PlannerValidationException($"Priority {priority} is already assigned for that week.");
 
         var task = draft with
         {
             Title = Text(draft.Title, 140, "Task title", required: true),
             Notes = Text(draft.Notes, 8000, "Task notes"),
             LoreIds = draft.LoreIds.Distinct().ToArray(),
-            Priority = draft.Status == PlannerStatus.Archived ? 0 : draft.Priority,
+            Priority = priority,
             InboxPending = draft.IsInbox,
             Revision = draft.Revision + 1
         };
@@ -211,6 +222,8 @@ public sealed class PlannerWorkspace
 
     public void MoveTask(PlannerTask task, PlannerLane lane, DateOnly today)
     {
+        if (!task.IsOpen)
+            task = task with { Priority = 0 };
         var week = PlannerCalendar.WeekOf(today);
         var updated = lane switch
         {
@@ -232,21 +245,29 @@ public sealed class PlannerWorkspace
             || week != PlannerCalendar.WeekOf(week))
             throw new PlannerValidationException("Choose a numeric project, a Monday, and a positive checkpoint.");
 
-        Checkpoints.RemoveAll(item => item.ProjectId == projectId && item.Week == week);
+        Checkpoints.RemoveAll(item => item.ProjectId == projectId && item.Week == week && item.UsesCurrentMetric(project));
         if (target is { } value)
-            Checkpoints.Add(new(projectId, week, value, project.Unit));
+            Checkpoints.Add(new(projectId, week, value, project.Unit, project.NumericMetricId));
     }
 
-    public int ProgressAt(Guid projectId, DateOnly day) => ProgressUpdates
-        .LastOrDefault(item => item.ProjectId == projectId && item.Day <= day)?.Value ?? 0;
+    public ProjectProgress? CheckpointProgress(ReadingCheckpoint checkpoint, DateOnly day)
+    {
+        var project = Project(checkpoint.ProjectId);
+        if (project is null)
+            return null;
+
+        if (checkpoint.MetricId is null && !checkpoint.UsesCurrentMetric(project)
+            && !checkpoint.Unit.Equals(project.LegacyNumericUnit, StringComparison.OrdinalIgnoreCase))
+            return null;
+
+        var value = ProgressUpdates.LastOrDefault(item => item.ProjectId == checkpoint.ProjectId
+            && item.MetricId == checkpoint.MetricId && item.Day <= day)?.Value ?? 0;
+        return new(value, checkpoint.Target, checkpoint.Unit);
+    }
 
     public void Review(PlannerTask task, DateOnly week, ReviewAction action, DateOnly? deferUntil,
         string stepsText, string note, DateOnly today)
     {
-        if (Decisions.Any(item => item.TaskId == task.Id && item.Week == week))
-            return;
-        var current = Task(task.Id);
-        CheckRevision(current?.Revision, task.Revision);
         if (!task.IsOpen || task.Week != week || !Enum.IsDefined(action))
             throw new PlannerValidationException("Only unfinished work scheduled for this week can be reviewed.");
 
@@ -268,6 +289,17 @@ public sealed class PlannerWorkspace
         }
         note = Text(note, 2000, "Review note");
 
+        if (Decisions.FirstOrDefault(item => item.TaskId == task.Id && item.Week == week
+            && item.SourceRevision == task.Revision) is { } previous)
+        {
+            if (previous.Action == action && previous.Destination == destination
+                && previous.Note == note && previous.Steps.SequenceEqual(steps))
+                return;
+            throw new PlannerValidationException("A decision for this version of the task was already saved. Reload the review and try again.");
+        }
+        var current = Task(task.Id);
+        CheckRevision(current?.Revision, task.Revision);
+
         if (action == ReviewAction.BreakDown)
         {
             foreach (var title in steps)
@@ -285,7 +317,7 @@ public sealed class PlannerWorkspace
             SaveTask(task with { Week = destination, Priority = 0,
                 Status = destination is null ? PlannerStatus.Open : task.Status }, today);
         }
-        Decisions.Add(new(task.Id, task.Title, week, action, destination, steps, note));
+        Decisions.Add(new(task.Id, task.Title, week, action, destination, steps, note, task.Revision));
     }
 
     private static void CheckRevision(int? current, int expected)

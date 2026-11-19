@@ -16,40 +16,42 @@
                 <h1>Hiileike</h1>
             </header>
 
-            <nav class="apps" aria-label="Apps">
-                @foreach (var app in Apps)
-                {
-                    <div class="app">
-                        <a class="tile" href="@app.Url" target="@(app.SameTab ? null : "_blank")" rel="@(app.SameTab ? null : "noopener noreferrer")">
-                            <span class="chip"><img src="@app.Icon" alt="" /></span>
-                            <span class="label">@app.Label</span>
-                        </a>
+            <div class="launchers">
+                <nav class="apps" aria-label="Apps">
+                    @foreach (var app in Apps)
+                    {
+                        <div class="app">
+                            <a class="tile" href="@app.Url" target="@(app.SameTab ? null : "_blank")" rel="@(app.SameTab ? null : "noopener noreferrer")">
+                                <span class="chip"><img src="@app.Icon" alt="" /></span>
+                                <span class="label">@app.Label</span>
+                            </a>
 
-                        @if (app.Local is { Length: > 0 })
+                            @if (app.Local is { Length: > 0 } links)
+                            {
+                                <div class="local-dropdown" role="group" aria-label="@app.Label, local network only">
+                                    @LocalLinks(links)
+                                </div>
+                            }
+                        </div>
+                    }
+                </nav>
+
+                <section class="local-network" aria-labelledby="local-network-heading">
+                    <h2 id="local-network-heading">Local network</h2>
+                    <div class="local-groups">
+                        @foreach (var app in Apps)
                         {
-                            <div class="local" role="group" aria-label="@app.Label, local network only">
-                                <ul>
-                                    @foreach (var link in app.Local)
-                                    {
-                                        <li>
-                                            <a class="pill" href="@link.Url" target="_blank" rel="noopener noreferrer">
-                                                <span>@link.Label</span>
-                                                <span class="tail">
-                                                    @if (link.Meta is not null)
-                                                    {
-                                                        <span class="meta">@link.Meta</span>
-                                                    }
-                                                    <span class="lan-badge" title="Only reachable on the local network">LAN</span>
-                                                </span>
-                                            </a>
-                                        </li>
-                                    }
-                                </ul>
-                            </div>
+                            @if (app.Local is { Length: > 0 } links)
+                            {
+                                <div class="local-group">
+                                    <h3>@app.Label</h3>
+                                    @LocalLinks(links)
+                                </div>
+                            }
                         }
                     </div>
-                }
-            </nav>
+                </section>
+            </div>
 
             <footer class="dock">
                 <span class="dock-title">Homelab</span>
@@ -70,7 +72,7 @@
         </div>
     </Authorized>
     <NotAuthorized>
-        <div class="stage">
+        <div class="stage signed-out">
             <div class="session">
                 <a class="signout" href="/login" data-enhance-nav="false">Log in</a>
             </div>
@@ -83,6 +85,24 @@
 </AuthorizeView>
 
 @code {
+    private RenderFragment LocalLinks(LocalLink[] links) => @<ul class="local-links">
+        @foreach (var link in links)
+        {
+            <li>
+                <a class="pill" href="@link.Url" target="_blank" rel="noopener noreferrer">
+                    <span>@link.Label</span>
+                    <span class="tail">
+                        @if (link.Meta is not null)
+                        {
+                            <span class="meta">@link.Meta</span>
+                        }
+                        <span class="lan-badge" title="Only reachable on the local network">LAN</span>
+                    </span>
+                </a>
+            </li>
+        }
+    </ul>;
+
     private record LocalLink(string Label, string Url, string? Meta = null);
 
     private record AppTile(string Label, string Icon, string Url, LocalLink[]? Local = null, bool SameTab = false);
@@ -105,7 +125,7 @@
             new("Suwayomi", "http://192.168.1.9:4567/library"),
         ]),
 
-        new("Planner", "/images/quill.png", "/planner", SameTab: true),
+        new("Projects", "/images/planner.png", "/planner", SameTab: true),
     ];
 
     private static readonly Tool[] Tools =

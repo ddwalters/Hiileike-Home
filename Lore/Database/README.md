@@ -33,6 +33,44 @@ under Demons Arcade. It leaves the revision snapshots, picture keys, and
 entry IDs in place. The file backend reads older entry and draft JSON in
 place and resolves their original categories the same way.
 
+## Upgrade and rollback
+
+Before starting the new image, retain the current image tag or digest and
+take a [backup](#backups) with the old app stopped. Save the completed backup
+directory separately from scheduled retention. The dump and picture archive
+must be from the same backup. Keep this copy even after the upgraded app
+starts and scheduled backups begin using the new schema.
+
+Migration 003 runs on first use. The previous image supports schema 002 and
+rejects schema 003. To roll back after migration, stop the upgraded app and
+take another backup of its database and pictures to retain changes made
+since the upgrade. Leave the upgraded database and attachment directory
+available for forward recovery.
+
+Restore the **pre-upgrade** dump into a fresh database owned by the app role.
+Restore the paired pictures into a fresh attachment directory. For the
+existing Docker PostgreSQL setup, set `container`, `role`, `rollback_db`,
+`backup`, and `rollback_pictures` to the container, app role, fresh
+database, pre-upgrade backup directory, and new host picture directory.
+
+```bash
+docker exec -i --user postgres "$container" pg_restore \
+  --single-transaction --exit-on-error --no-owner --no-privileges \
+  -U "$role" -d "$rollback_db" < "$backup/lore.dump"
+mkdir -p "$rollback_pictures"
+tar -xf "$backup/pictures.tar" -C "$rollback_pictures"
+```
+
+Point the previous image at the restored database and mount the restored
+picture directory under its configured `Lore__DataDirectory`. Before
+switching traffic, sign in and open an existing bookmark, revision, and
+picture. The old app resumes from the pre-upgrade snapshot. Later changes
+remain in the upgraded backup for recovery with the newer image.
+
+For a file-backed installation, use a copy of the pre-upgrade Project Notes
+data directory with the previous image. Back up the full directory while the
+app is stopped, and include the Planner directory if it has a separate path.
+
 ## Desktop database access
 
 Applications on the Docker network connect using service names and container

@@ -52,7 +52,7 @@ else
     var tasks = Workspace.Tasks.Where(task => task.ProjectId == project.Id
         && task.Status is not (PlannerStatus.Replaced or PlannerStatus.Archived)).ToArray();
     var week = PlannerCalendar.WeekOf(Today);
-    var checkpoint = Workspace.Checkpoints.FirstOrDefault(item => item.ProjectId == project.Id && item.Week == week);
+    var checkpoint = Workspace.Checkpoints.FirstOrDefault(item => item.ProjectId == project.Id && item.Week == week && item.UsesCurrentMetric(project));
 
     <div class="planner-heading">
         <div>

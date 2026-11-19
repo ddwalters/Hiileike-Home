@@ -11,13 +11,14 @@ public sealed class LoreStore(IWebHostEnvironment environment, IConfiguration co
     public const int PendingPictureBytes = 48 * 1024 * 1024;
 
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web) { WriteIndented = true };
-    private readonly string root = Path.GetFullPath(
-        configuration["Lore:DataDirectory"] is { Length: > 0 } dataPath ? dataPath
-            : Path.Combine("App_Data", "lore-builder"),
-        environment.ContentRootPath);
+    private readonly string root = DataRoot(environment, configuration);
     private readonly object gate = new();
     private Dictionary<Guid, LoreRevision[]>? history;
     private readonly LoreDatabase? database = LoreDatabase.Create(configuration);
+
+    internal static string DataRoot(IWebHostEnvironment environment, IConfiguration configuration) => Path.GetFullPath(
+        configuration["Lore:DataDirectory"] is { Length: > 0 } path ? path : Path.Combine("App_Data", "lore-builder"),
+        environment.ContentRootPath);
 
     private string CatalogPath => Path.Combine(root, "entries.json");
     private string PicturePath(Picture picture) => Path.Combine(root, "pictures", LoreDatabase.PictureKey(picture));
@@ -42,6 +43,8 @@ public sealed class LoreStore(IWebHostEnvironment environment, IConfiguration co
     public NoteCategory SaveCategory(Guid projectId, Guid? id, string name, string? expectedName, IReadOnlySet<Guid> scope)
     {
         RequireAccess(projectId, scope);
+        if (projectId == NoteCatalog.LegacyId && id is null)
+            throw new InvalidOperationException("Add new categories in your own project.");
         return Run(session =>
         {
             var categories = Categories(projectId, session);
@@ -95,6 +98,37 @@ public sealed class LoreStore(IWebHostEnvironment environment, IConfiguration co
         return Run(session => LoadDraft(projectId, id, session));
     }
 
+    public LoreEntry CopyLegacyDraft(Guid projectId, IReadOnlySet<Guid> scope)
+    {
+        RequireAccess(projectId, scope);
+        RequireAccess(NoteCatalog.LegacyId, scope);
+        if (projectId == NoteCatalog.LegacyId)
+            throw new InvalidOperationException("Choose your own project to recover this draft.");
+
+        return Run(session =>
+        {
+            if (LoadDraft(projectId, Guid.Empty, session) is not null)
+                throw new InvalidOperationException("Finish your current new-note draft before recovering the migrated draft.");
+            var source = LoadDraft(NoteCatalog.LegacyId, Guid.Empty, session)
+                ?? throw new InvalidOperationException("No migrated draft is available.");
+            var sourceCategory = Categories(NoteCatalog.LegacyId, session)
+                .FirstOrDefault(item => item.Id == source.Entry.EffectiveCategoryId);
+            var category = sourceCategory is null ? null : Categories(projectId, session)
+                .FirstOrDefault(item => item.Name.Equals(sourceCategory.Name, StringComparison.OrdinalIgnoreCase));
+            var entry = source.Entry with
+            {
+                Id = Guid.NewGuid(), ProjectId = projectId, Kind = null, CategoryId = category?.Id,
+                CategoryName = category?.Name, Revision = 0, Links = [], Pictures = []
+            };
+            var copy = new LoreDraft(Guid.NewGuid(), entry, source.Tags);
+            if (session is null)
+                WriteJson(DraftPath(projectId, Guid.Empty), copy);
+            else
+                session.SaveDraft(projectId, Guid.Empty, copy);
+            return entry;
+        });
+    }
+
     private LoreDraft? LoadDraft(Guid projectId, Guid id, DatabaseSession? session)
     {
         var draft = session is null ? ReadDraft(DraftPath(projectId, id)) : session.LoadDraft(projectId, id);
@@ -105,6 +139,8 @@ public sealed class LoreStore(IWebHostEnvironment environment, IConfiguration co
     {
         var projectId = draft.Entry.CatalogId;
         RequireAccess(projectId, scope);
+        if (projectId == NoteCatalog.LegacyId && id == Guid.Empty)
+            return false;
         return Run(session =>
         {
             var catalog = Load(session);
@@ -196,6 +232,8 @@ public sealed class LoreStore(IWebHostEnvironment environment, IConfiguration co
             var catalog = Load(session);
             var current = CurrentEntries(catalog);
             current.TryGetValue(draft.Id, out var original);
+            if (original is null && projectId == NoteCatalog.LegacyId)
+                throw new InvalidOperationException("Create new notes in your own project.");
             if (original is not null && original.CatalogId != projectId)
                 throw new InvalidOperationException("This note belongs to a different project.");
             VerifyRevision(original, draft.Revision);

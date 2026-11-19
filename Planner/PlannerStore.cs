@@ -12,13 +12,12 @@ public sealed class PlannerStore(IWebHostEnvironment environment, IConfiguration
 {
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
     private readonly PlannerDatabase? database = PlannerDatabase.Create(configuration);
-    private readonly string root = Path.GetFullPath(configuration["Planner:DataDirectory"] is { Length: > 0 } path
-        ? path : Path.Combine("App_Data", "planner"), environment.ContentRootPath);
+    private readonly (string Root, string? PreviousRoot) files = FilePaths(environment, configuration);
 
     public async Task<PlannerWorkspace> ReadAsync(ClaimsPrincipal user)
     {
         var owner = Owner(user);
-        return database is null ? await ReadFileAsync(Path.Combine(root, owner + ".json"))
+        return database is null ? await ReadFileAsync(await WorkspacePathAsync(owner)) ?? new()
             : await database.AccessAsync(owner, null);
     }
 
@@ -28,11 +27,45 @@ public sealed class PlannerStore(IWebHostEnvironment environment, IConfiguration
         if (database is not null)
             return await database.AccessAsync(owner, change);
 
-        Directory.CreateDirectory(root);
-        var path = Path.Combine(root, owner + ".json");
+        var path = await WorkspacePathAsync(owner);
+        Directory.CreateDirectory(files.Root);
         await using var gate = await LockFileAsync(path + ".lock");
-        var workspace = await ReadFileAsync(path);
+        var workspace = await ReadFileAsync(path) ?? new();
         change(workspace);
+        await WriteFileAsync(path, workspace);
+        return workspace;
+    }
+
+    private static (string Root, string? PreviousRoot) FilePaths(IWebHostEnvironment environment, IConfiguration configuration)
+    {
+        var content = environment.ContentRootPath;
+        var previous = Path.Combine(content, "App_Data", "planner");
+        if (configuration["Planner:DataDirectory"] is { Length: > 0 } path)
+            return (Path.GetFullPath(path, content), null);
+        var root = Path.Combine(LoreStore.DataRoot(environment, configuration), "planner");
+        return (root, Path.GetRelativePath(root, previous) == "." ? null : previous);
+    }
+
+    private async Task<string> WorkspacePathAsync(string owner)
+    {
+        var name = owner + ".json";
+        var path = Path.Combine(files.Root, name);
+        if (files.PreviousRoot is not { } previous || File.Exists(path))
+            return path;
+
+        var oldPath = Path.Combine(previous, name);
+        if (!File.Exists(oldPath))
+            return path;
+
+        Directory.CreateDirectory(files.Root);
+        await using var gate = await LockFileAsync(path + ".lock");
+        if (!File.Exists(path) && await ReadFileAsync(oldPath) is { } workspace)
+            await WriteFileAsync(path, workspace);
+        return path;
+    }
+
+    private static async Task WriteFileAsync(string path, PlannerWorkspace workspace)
+    {
         var temporary = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
         try
         {
@@ -47,7 +80,6 @@ public sealed class PlannerStore(IWebHostEnvironment environment, IConfiguration
         {
             File.Delete(temporary);
         }
-        return workspace;
     }
 
     public async ValueTask DisposeAsync()
@@ -81,7 +113,7 @@ public sealed class PlannerStore(IWebHostEnvironment environment, IConfiguration
         }
     }
 
-    private static async Task<PlannerWorkspace> ReadFileAsync(string path)
+    private static async Task<PlannerWorkspace?> ReadFileAsync(string path)
     {
         try
         {
@@ -91,11 +123,11 @@ public sealed class PlannerStore(IWebHostEnvironment environment, IConfiguration
         }
         catch (FileNotFoundException)
         {
-            return new();
+            return null;
         }
         catch (DirectoryNotFoundException)
         {
-            return new();
+            return null;
         }
     }
 

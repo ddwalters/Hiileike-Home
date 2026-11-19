@@ -3,7 +3,7 @@ This website links myself to my other homelab hosted sites.
 
 ## Planner
 
-The Planner tile opens This Week. Use **Quick add** to capture ideas to the
+The **Projects** tile opens This Week. Use **Quick add** to capture ideas to the
 Inbox, **Board** to schedule and move tasks, and **Projects** for roadmaps,
 milestones, and subprojects. Open **Project Notes** from the Planner sidebar to
 choose a project, or open it directly from a project or subproject. Tasks can
@@ -17,13 +17,17 @@ to the project where it was created.
 On first use with an existing Lore catalog, Planner creates or reuses a
 top-level **Demons Arcade** project and links it to that catalog. Existing
 categories, bookmarks, revisions, links, drafts, and pictures remain available.
-This migrated catalog retains the existing access for signed-in users.
-Other project catalogs follow the Planner account's project access.
+Existing notes in the migrated catalog retain their signed-in access. New notes
+and categories in Demons Arcade belong to your account, like those in other
+projects. **Recover migrated draft** opens a private copy of the old new-note
+draft. Shared links stay with the original draft. The copy uses a matching
+private category when one is available.
 
 Pick a progress measure for each project. Task and milestone measures include
 the work in subprojects. Average subproject progress weights each direct
 subproject equally. Numeric goals track a current value and target, with an
-optional weekly checkpoint for goals such as reading pages.
+optional weekly checkpoint for goals such as reading pages. Changing the unit
+starts a new series and keeps previous checkpoints with their original units.
 
 Project settings, task details, and milestone details each have a dashboard
 visibility control. Hiding a project also hides its subprojects and their work.
@@ -41,8 +45,12 @@ as a database administrator using `CREATE SCHEMA planner AUTHORIZATION hiileike;
 
 Set `ConnectionStrings__Planner` to use a separate database, such as when
 running Lore from files. Back up that Planner database separately. With no
-database configured, Planner saves locally in `App_Data/planner`. Set
-`Planner__DataDirectory` to override that directory and back it up if using
-file storage. Switching backends does not copy existing data between them.
+database configured, Planner saves in the `planner` subdirectory of the
+Project Notes data directory. Mount and back up the whole notes directory to
+keep the projects and their notes together. On first access, the app copies
+an existing workspace from `App_Data/planner` if the new location is empty.
+Set `Planner__DataDirectory` to choose a separate location. Back it up
+alongside the notes directory. Switching database backends does not copy
+existing data between them.
 
 -- Occasionally, when I'm not home some commits are made remotely with AI, if so I review them/ fix stuff when I'm back on my desk.

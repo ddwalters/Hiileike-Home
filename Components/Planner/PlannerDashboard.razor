@@ -17,8 +17,7 @@
         .DistinctBy(item => item.TaskId).Count();
     var overdue = deadlines.Count(item => item.Day < Today);
     var carryover = tasks.Count(task => task.IsOpen && task.Week < week);
-    var checkpoints = Workspace.Checkpoints.Where(item => item.Week == week)
-        .Where(item => Workspace.Project(item.ProjectId)?.Measure == ProgressMeasure.Numeric).ToArray();
+    var checkpoints = Workspace.Checkpoints.Where(item => item.Week == week).ToArray();
     var focusedIds = active.Select(task => task.ProjectId)
         .Concat(tasks.Where(task => task.IsOpen && task.Due <= end).Select(task => task.ProjectId))
         .Concat(milestones.Where(item => !item.Done && item.Due >= week && item.Due <= end).Select(item => (Guid?)item.ProjectId))
@@ -125,11 +124,16 @@
             <a class="planner-project-meter" href="@($"/planner/projects/{project.Id}")">
                 <span><strong>@project.Name</strong><LoreIcon Name="arrow" Size="15" /></span>
                 <PlannerProgress Progress="@Workspace.Progress(project)" Label="@project.Name" />
-                @if (checkpoints.FirstOrDefault(item => item.ProjectId == project.Id) is { } checkpoint)
+                @foreach (var checkpoint in checkpoints.Where(item => item.ProjectId == project.Id))
                 {
-                    <small class="@(project.Value >= checkpoint.Target ? "goal-met" : "planner-muted")">
-                        This week: @project.Value.ToString("N0") / @checkpoint.Target.ToString("N0") @project.Unit
-                    </small>
+                    @if (Workspace.CheckpointProgress(checkpoint, Today) is { } result)
+                    {
+                        <small class="@(result.Value >= checkpoint.Target ? "goal-met" : "planner-muted")">This week: @result.Label</small>
+                    }
+                    else
+                    {
+                        <small class="planner-muted">This week: @checkpoint.Unit history unavailable</small>
+                    }
                 }
             </a>
         }

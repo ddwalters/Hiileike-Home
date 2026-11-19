@@ -46,6 +46,4 @@ public sealed class ProjectNotesWorkspace(PlannerStore planner, LoreStore notes,
     public static PlannerProject? FindProject(PlannerWorkspace workspace, Guid catalogId) => catalogId == NoteCatalog.LegacyId
         ? workspace.Projects.FirstOrDefault(project => project.IncludesLegacyNotes)
         : workspace.Project(catalogId);
-
-    public static Guid PrimaryCatalog(PlannerProject project) => project.IncludesLegacyNotes ? NoteCatalog.LegacyId : project.Id;
 }
