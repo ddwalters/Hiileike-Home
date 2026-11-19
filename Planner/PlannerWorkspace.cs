@@ -59,6 +59,7 @@ public sealed class PlannerWorkspace
     public List<ReviewDecision> Decisions { get; init; } = [];
     public List<ProgressUpdate> ProgressUpdates { get; init; } = [];
     public List<ReadingCheckpoint> Checkpoints { get; init; } = [];
+    public bool PersonalPlanAdded { get; set; }
 
     public PlannerProject? Project(Guid? id) => Projects.Find(project => project.Id == id);
     public PlannerMilestone? Milestone(Guid? id) => Milestones.Find(milestone => milestone.Id == id);

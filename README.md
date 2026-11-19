@@ -34,6 +34,13 @@ visibility control. Hiding a project also hides its subprojects and their work.
 Hidden items remain available in Planner and count toward project progress.
 **Show hidden items** temporarily includes them in the dashboard.
 
+The personal plan is added once per account as editable projects, milestones,
+tasks, and a reading checkpoint. Set `Planner__PersonalPlanUsername` to an
+Authentik username for automatic import on the first visit to Planner. The
+account can also enter its import code under **Projects → Import your plan**.
+The import reuses matching projects, milestones, and tasks and preserves
+existing priorities and reading progress.
+
 ### Storage
 
 Planner uses the signed-in account's stable ID and a separate PostgreSQL schema.

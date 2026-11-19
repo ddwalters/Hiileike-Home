@@ -9,6 +9,9 @@
 @inject AuthenticationStateProvider Authentication
 @inject NavigationManager Navigation
 @inject ILogger<PlannerHome> Logger
+@inject IConfiguration Configuration
+@using System.Security.Cryptography
+@using System.Text
 
 <PageTitle>@PageName · Planner</PageTitle>
 
@@ -104,6 +107,17 @@
                         break;
                     case "projects":
                         <PlannerProjects @key="ProjectId" ProjectId="ProjectId" Workspace="workspace" Today="Today" Save="Apply" Busy="busy" />
+                        @if (ProjectId is null && CanImportPersonalPlan)
+                        {
+                            <details class="planner-panel">
+                                <summary>Import your plan</summary>
+                                <form class="planner-form planner-progress-form" aria-label="Import your plan"
+                                      @onsubmit="ImportPersonalPlan" @onsubmit:preventDefault>
+                                    <label>Import code <input type="password" required maxlength="80" autocomplete="off" @bind="planCode" /></label>
+                                    <button type="submit" class="planner-button" disabled="@busy">Add plan</button>
+                                </form>
+                            </details>
+                        }
                         break;
                     case "inbox":
                         <div class="planner-heading">
@@ -161,8 +175,11 @@
     private string captureTitle = "";
     private Guid? captureId;
     private string? error, message;
+    private string planCode = "";
     private ElementReference captureInput;
     private DateOnly Today => PlannerCalendar.Today;
+    private bool CanImportPersonalPlan => !workspace.PersonalPlanAdded
+        && Configuration["Planner:PersonalPlanImportCodeHash"] is { Length: 64 };
 
     private string Page => ProjectId is not null ? "projects" : TaskId is not null ? "task" : Section?.ToLowerInvariant() switch
     {
@@ -187,6 +204,7 @@
     {
         capture = false;
         focusCapture = false;
+        planCode = "";
         message = null;
         await Load();
     }
@@ -199,6 +217,12 @@
         {
             user = (await Authentication.GetAuthenticationStateAsync()).User;
             workspace = await ProjectNotes.ReadAsync(user);
+            if (!workspace.PersonalPlanAdded && Configuration["Planner:PersonalPlanUsername"] is { Length: > 0 } username
+                && user.HasClaim("preferred_username", username))
+            {
+                var today = Today;
+                workspace = await Store.ChangeAsync(user, state => PersonalPlannerPlan.Add(state, today));
+            }
             loaded = true;
         }
         catch (PlannerValidationException exception)
@@ -210,6 +234,23 @@
             Logger.LogError(exception, "Unable to load Planner");
             error = "Planner storage is unavailable. Try again in a moment.";
         }
+    }
+
+    private async Task ImportPersonalPlan()
+    {
+        var entered = planCode.Trim();
+        planCode = "";
+        var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(entered)));
+        if (!CanImportPersonalPlan || Configuration["Planner:PersonalPlanImportCodeHash"] is not { } expected
+            || !CryptographicOperations.FixedTimeEquals(Encoding.ASCII.GetBytes(hash), Encoding.ASCII.GetBytes(expected.ToUpperInvariant())))
+        {
+            message = null;
+            error = "That import code does not match.";
+            return;
+        }
+
+        var today = Today;
+        await Apply(state => PersonalPlannerPlan.Add(state, today), "Your plan was added.");
     }
 
     private void ToggleCapture()
