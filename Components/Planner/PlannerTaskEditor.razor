@@ -1,34 +1,109 @@
 @inject LoreStore Lore
-@inject NavigationManager Navigation
+@inject IJSRuntime JS
 @inject ILogger<PlannerTaskEditor> Logger
 
-<div class="planner-heading">
-    <div>
-        <a class="planner-back" href="@BackUrl"><LoreIcon Name="back" Size="16" /> @BackLabel</a>
-        <h1>@(TaskId is null ? "New task" : draft?.Title ?? "Task unavailable")</h1>
-    </div>
-</div>
+<NavigationLock ConfirmExternalNavigation="@HasChanges" OnBeforeInternalNavigation="ConfirmNavigation" />
+
+<header class="queue-task-heading">
+    @if (!editing && draft is not null)
+    {
+        <span class="@($"queue-state {draft.Status.ToString().ToLowerInvariant()}")">@(draft.IsInbox ? "Unassigned" : draft.Status.Label())</span>
+    }
+    <h2 tabindex="-1" data-task-heading>@(TaskId is null ? "New task" : draft?.Title ?? "Task unavailable")</h2>
+</header>
 
 @if (draft is null)
 {
     <p class="planner-empty">This task could not be found in your workspace.</p>
 }
-else if (draft.Status == PlannerStatus.Replaced)
+else if (!editing)
 {
-    <section class="planner-panel">
-        <p class="planner-notes">@draft.Notes</p>
-        <p>This task was broken down during <a href="/planner/review">weekly review</a>.</p>
-    </section>
+    @if (draft.Status == PlannerStatus.Replaced)
+    {
+        <p class="planner-muted">This task was broken down during <a href="/planner/review">weekly review</a>.</p>
+    }
+    else
+    {
+        <div class="planner-actions queue-task-actions">
+            @if (draft.IsOpen)
+            {
+                <button type="button" class="planner-button primary" disabled="@Busy" @onclick="() => Move(PlannerLane.Done)">Mark done</button>
+            }
+            @if (draft.Status == PlannerStatus.Open)
+            {
+                @if (draft.IsInbox)
+                {
+                    <button type="button" class="planner-button" disabled="@Busy" @onclick="() => Move(PlannerLane.Backlog)">Move to backlog</button>
+                }
+                else
+                {
+                    <button type="button" class="planner-button" disabled="@Busy" @onclick="() => Move(PlannerLane.InProgress)">Start</button>
+                }
+            }
+            <button type="button" class="planner-button" disabled="@Busy" @onclick="BeginEditing">Edit</button>
+        </div>
+    }
+    <dl class="queue-task-metadata">
+        <div>
+            <dt>Project</dt>
+            <dd>
+                @if (Workspace.Project(draft.ProjectId) is { } project)
+                {
+                    <a href="@($"/planner/projects/{project.Id}")">@project.Name</a>
+                }
+                else
+                {
+                    <span>No project</span>
+                }
+            </dd>
+        </div>
+        @if (Workspace.Milestone(draft.MilestoneId) is { } milestone)
+        {
+            <div><dt>Milestone</dt><dd>@milestone.Title</dd></div>
+        }
+        @if (draft.Due is { } dueDate)
+        {
+            <div><dt>Due</dt><dd class="@(draft.IsOpen && dueDate < Today ? "overdue" : null)">@dueDate.ToString("MMM d, yyyy")</dd></div>
+        }
+        @if (draft.Week is { } plannedWeek)
+        {
+            <div><dt>Planned week</dt><dd>@PlannerCalendar.Range(plannedWeek)</dd></div>
+        }
+    </dl>
+    @if (!string.IsNullOrWhiteSpace(draft.Notes))
+    {
+        <section class="queue-task-section">
+            <h3>Notes</h3>
+            <p class="planner-notes">@draft.Notes</p>
+        </section>
+    }
+    @if (draft.LoreIds.Length > 0)
+    {
+        <section class="queue-task-section">
+            <h3>Linked notes</h3>
+            @foreach (var id in draft.LoreIds)
+            {
+                if (loreEntries.FirstOrDefault(item => item.Id == id) is { } entry)
+                {
+                    <a class="queue-note-link" href="@($"/project-notes/entry/{id}")">@entry.Title <LoreIcon Name="arrow" Size="15" /></a>
+                }
+                else
+                {
+                    <p class="planner-muted">@(loreUnavailable ? "Linked note temporarily unavailable." : "Deleted note.")</p>
+                }
+            }
+        </section>
+    }
 }
 else
 {
-    <form class="planner-panel planner-form" aria-label="Task details" @onsubmit="Submit" @onsubmit:preventDefault>
-        <label>Title <input maxlength="140" required @bind="title" /></label>
-        <label>Notes <textarea rows="4" maxlength="8000" @bind="notes"></textarea></label>
+    <form class="planner-form queue-task-form" aria-label="Edit task" @onsubmit="Submit" @onsubmit:preventDefault>
+        <label>Title <input maxlength="140" required @bind="title" @bind:event="oninput" @ref="titleInput" /></label>
+        <label>Notes <textarea rows="4" maxlength="8000" @bind="notes" @bind:event="oninput"></textarea></label>
         <div class="planner-fields">
             <label>Project
                 <select @bind="projectId" @bind:after="ProjectChanged">
-                    <option value="">Unassigned</option>
+                    <option value="">No project</option>
                     @foreach (var project in Workspace.Projects.OrderBy(item => item.Name))
                     {
                         <option value="@project.Id">@project.Name</option>
@@ -121,11 +196,10 @@ else
         </fieldset>
         <div class="planner-actions">
             <button type="submit" class="planner-button primary" disabled="@Busy">Save task</button>
-            @if (draft.IsInbox)
+            @if (TaskId is not null)
             {
-                <button type="button" class="planner-button" disabled="@Busy" @onclick="MoveToBacklog">Move to backlog</button>
+                <button type="button" class="planner-button" @onclick="CancelEditing" disabled="@Busy">Cancel</button>
             }
-            <a class="planner-button" href="@BackUrl">Back</a>
         </div>
     </form>
 }
@@ -137,12 +211,15 @@ else
     [Parameter] public Guid? TaskId { get; set; }
     [Parameter] public Guid? InitialProject { get; set; }
     [Parameter] public Guid? InitialMilestone { get; set; }
+    [Parameter] public bool PlanThisWeek { get; set; }
     [Parameter, EditorRequired] public PlannerWorkspace Workspace { get; set; } = default!;
     [Parameter, EditorRequired] public DateOnly Today { get; set; }
     [Parameter, EditorRequired] public Func<Action<PlannerWorkspace>, string, Task<PlannerWorkspace?>> Save { get; set; } = default!;
+    [Parameter, EditorRequired] public EventCallback<PlannerTask> Saved { get; set; }
     [Parameter] public bool Busy { get; set; }
 
     private PlannerTask? draft;
+    private ElementReference titleInput;
     private string title = "", notes = "", search = "";
     private Guid? projectId, milestoneId;
     private DateOnly? due, week;
@@ -150,22 +227,35 @@ else
     private PlannerStatus status;
     private List<Guid> links = [];
     private LoreEntry[] loreEntries = [];
-    private bool loreUnavailable, hidden;
+    private bool loreUnavailable, loreLoaded, hidden, editing, focusEditor;
 
-    private string BackLabel => Workspace.Project(projectId)?.Name ?? (draft?.IsInbox == true && TaskId is not null ? "Inbox" : "Board");
-    private string BackUrl => Workspace.Project(projectId) is { } project ? $"/planner/projects/{project.Id}"
-        : draft?.IsInbox == true && TaskId is not null ? "/planner/inbox" : "/planner/board";
+    private bool HasChanges => editing && draft is not null && (title != draft.Title || notes != draft.Notes
+        || projectId != draft.ProjectId || milestoneId != draft.MilestoneId || due != draft.Due || week != draft.Week
+        || priority != (draft.IsOpen ? draft.Priority : 0) || status != draft.Status || hidden != draft.HiddenFromDashboard
+        || !links.SequenceEqual(draft.LoreIds));
 
     protected override void OnInitialized()
     {
         var project = Workspace.Project(InitialProject);
         var milestone = Workspace.Milestone(InitialMilestone);
         draft = TaskId is { } id ? Workspace.Task(id) : PlannerTask.New(project?.Id,
-            milestone?.ProjectId == project?.Id ? milestone?.Id : null);
+            milestone?.ProjectId == project?.Id ? milestone?.Id : null) with
+        {
+            Week = PlanThisWeek ? PlannerCalendar.WeekOf(Today) : null
+        };
         if (draft is null)
             return;
 
         SetDraft(draft);
+        editing = TaskId is null;
+        if (editing || draft.LoreIds.Length > 0)
+            LoadLore();
+    }
+
+    private void LoadLore()
+    {
+        if (loreLoaded)
+            return;
         try
         {
             var scope = ProjectNotesWorkspace.CatalogIds(Workspace.Projects);
@@ -175,6 +265,8 @@ else
                     CategoryName = categories.GetValueOrDefault(entry.CatalogId)?
                         .FirstOrDefault(category => category.Id == entry.EffectiveCategoryId)?.Name ?? entry.CategoryLabel
                 }).OrderBy(item => item.Title).ToArray();
+            loreLoaded = true;
+            loreUnavailable = false;
         }
         catch (Exception exception)
         {
@@ -182,6 +274,38 @@ else
             Logger.LogWarning(exception, "Unable to list Project Notes for Planner");
         }
     }
+
+    private void BeginEditing()
+    {
+        LoadLore();
+        editing = true;
+        focusEditor = true;
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (focusEditor)
+        {
+            focusEditor = false;
+            await titleInput.FocusAsync();
+        }
+    }
+
+    private async Task CancelEditing()
+    {
+        if (draft is null || HasChanges && !await ConfirmDiscard())
+            return;
+        SetDraft(draft);
+        editing = false;
+    }
+
+    private async Task ConfirmNavigation(LocationChangingContext context)
+    {
+        if (HasChanges && !await ConfirmDiscard())
+            context.PreventNavigation();
+    }
+
+    private ValueTask<bool> ConfirmDiscard() => JS.InvokeAsync<bool>("confirm", "Discard unsaved task changes?");
 
     private void SetDraft(PlannerTask task)
     {
@@ -202,10 +326,7 @@ else
         priority = 0;
     }
 
-    private Task Submit() => SaveDraft(moveToBacklog: false);
-    private Task MoveToBacklog() => SaveDraft(moveToBacklog: true);
-
-    private async Task SaveDraft(bool moveToBacklog)
+    private async Task Submit()
     {
         if (draft is null)
             return;
@@ -215,16 +336,31 @@ else
             Title = title, Notes = notes, ProjectId = projectId, MilestoneId = milestoneId, Due = due,
             Week = week is { } date ? PlannerCalendar.WeekOf(date) : null,
             Priority = week is null ? 0 : priority, Status = status, HiddenFromDashboard = hidden,
-            InboxPending = draft.InboxPending && !moveToBacklog,
+            InboxPending = draft.InboxPending,
             LoreIds = (loreUnavailable ? links : links.Where(id => loreEntries.Any(entry => entry.Id == id))).ToArray()
         };
-        var saved = await Save(state => state.SaveTask(updated, Today), moveToBacklog ? "Moved to backlog." : "Task saved.");
-        if (saved is null)
+        var today = Today;
+        var saved = await Save(state => state.SaveTask(updated, today), "Task saved.");
+        if (saved?.Task(updated.Id) is not { } task)
             return;
 
-        if (TaskId is null)
-            Navigation.NavigateTo($"/planner/tasks/{updated.Id}");
-        else if (saved.Task(updated.Id) is { } task)
+        SetDraft(task);
+        editing = false;
+        await Saved.InvokeAsync(task);
+    }
+
+    private async Task Move(PlannerLane lane)
+    {
+        if (draft is not { } previous)
+            return;
+
+        var today = Today;
+        var message = lane == PlannerLane.Done ? $"Completed {previous.Title}." : $"Moved to {lane.Label()}.";
+        var saved = await Save(state => state.MoveTask(previous, lane, today), message);
+        if (saved?.Task(previous.Id) is { } task)
+        {
             SetDraft(task);
+            await Saved.InvokeAsync(task);
+        }
     }
 }

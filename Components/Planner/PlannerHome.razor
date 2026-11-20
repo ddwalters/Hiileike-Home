@@ -9,9 +9,6 @@
 @inject AuthenticationStateProvider Authentication
 @inject NavigationManager Navigation
 @inject ILogger<PlannerHome> Logger
-@inject IConfiguration Configuration
-@using System.Security.Cryptography
-@using System.Text
 
 <PageTitle>@PageName · Planner</PageTitle>
 
@@ -22,29 +19,19 @@
             <span><strong>Planner</strong><small>Hiileike Home</small></span>
         </a>
         <nav aria-label="Planner">
-            <a class="@NavClass("dashboard")" aria-current="@Current("dashboard")" href="/planner">
-                <LoreIcon Name="grid" Size="16" /> Dashboard
-            </a>
-            <a class="@NavClass("board")" aria-current="@Current("board")" href="/planner/board">
-                <LoreIcon Name="Misc" Size="16" /> Board
+            <a class="@NavClass("queue")" aria-current="@Current("queue")" href="/planner">
+                <LoreIcon Name="list" Size="16" /> Queue
             </a>
             <a class="@NavClass("projects")" aria-current="@Current("projects")" href="/planner/projects">
                 <LoreIcon Name="Quest" Size="16" /> Projects
             </a>
-            <a class="@NavClass("inbox")" aria-current="@Current("inbox")" href="/planner/inbox">
-                <LoreIcon Name="Item" Size="16" /> Inbox
-                @if (workspace.Tasks.Count(task => task.IsInbox) is > 0 and var count)
-                {
-                    <small class="planner-nav-count">@count</small>
-                }
-            </a>
-            <a class="@NavClass("review")" aria-current="@Current("review")" href="/planner/review">
-                <LoreIcon Name="check" Size="16" /> Weekly review
+            <a class="planner-nav" href="/project-notes">
+                <LoreIcon Name="book" Size="17" /> Project Notes <span aria-hidden="true">↗</span>
             </a>
         </nav>
         <div class="planner-sidebar-end">
-            <a class="planner-nav" href="/project-notes">
-                <LoreIcon Name="book" Size="17" /> Project Notes <span aria-hidden="true">↗</span>
+            <a class="@NavClass("review")" aria-current="@Current("review")" href="/planner/review">
+                <LoreIcon Name="check" Size="16" /> Weekly review
             </a>
             <a class="planner-nav" href="/">
                 <LoreIcon Name="back" Size="17" /> Hiileike Home
@@ -74,11 +61,11 @@
             }
             @if (capture)
             {
-                <form class="planner-panel planner-capture" aria-label="Quick add to Inbox" @onsubmit="Capture" @onsubmit:preventDefault>
-                    <label for="planner-capture-title">Capture to Inbox</label>
+                <form class="planner-panel planner-capture" aria-label="Quick add" @onsubmit="Capture" @onsubmit:preventDefault>
+                    <label for="planner-capture-title">Task or idea</label>
                     <div class="planner-actions">
-                        <input id="planner-capture-title" maxlength="140" required placeholder="Task or idea" @bind="captureTitle" @ref="captureInput" />
-                        <button type="submit" class="planner-button primary" disabled="@busy">Add to Inbox</button>
+                        <input id="planner-capture-title" maxlength="140" required @bind="captureTitle" @ref="captureInput" />
+                        <button type="submit" class="planner-button primary" disabled="@busy">Add task</button>
                         <button type="button" class="planner-button" @onclick="ToggleCapture">Close</button>
                     </div>
                 </form>
@@ -99,62 +86,24 @@
             {
                 @switch (Page)
                 {
-                    case "dashboard":
+                    case "overview":
                         <PlannerDashboard Workspace="workspace" Today="Today" />
                         break;
-                    case "board":
-                        <PlannerBoard Workspace="workspace" Today="Today" Save="Apply" Busy="busy" />
+                    case "queue":
+                        <PlannerQueue Workspace="workspace" Today="Today" Save="Apply" Busy="busy" SelectedTask="QueueTask"
+                                      ProjectFilter="@ParseId(ProjectQuery)" InitialMilestone="@ParseId(MilestoneQuery)"
+                                      ViewName="@QueueViewName" SortName="@SortQuery" Creating="CreateTask" />
                         break;
                     case "projects":
-                        <PlannerProjects @key="ProjectId" ProjectId="ProjectId" Workspace="workspace" Today="Today" Save="Apply" Busy="busy" />
-                        @if (ProjectId is null && CanImportPersonalPlan)
-                        {
-                            <details class="planner-panel">
-                                <summary>Import your plan</summary>
-                                <form class="planner-form planner-progress-form" aria-label="Import your plan"
-                                      @onsubmit="ImportPersonalPlan" @onsubmit:preventDefault>
-                                    <label>Import code <input type="password" required maxlength="80" autocomplete="off" @bind="planCode" /></label>
-                                    <button type="submit" class="planner-button" disabled="@busy">Add plan</button>
-                                </form>
-                            </details>
-                        }
-                        break;
-                    case "inbox":
-                        <div class="planner-heading">
-                            <div><h1>Inbox</h1><p>Assign captured ideas to a project, schedule them, or archive them.</p></div>
-                            <button type="button" class="planner-button" @onclick="ToggleCapture">Capture an idea</button>
-                        </div>
-                        <section class="planner-panel">
-                            @foreach (var task in workspace.Tasks.Where(task => task.IsInbox).Reverse())
-                            {
-                                <PlannerTaskRow @key="task.Id" Item="task" Workspace="workspace" />
-                            }
-                            @if (!workspace.Tasks.Any(task => task.IsInbox))
-                            {
-                                <p class="planner-empty">Inbox is clear.</p>
-                            }
-                        </section>
-                        @if (workspace.Tasks.Any(task => task.Status == PlannerStatus.Archived))
-                        {
-                            <details class="planner-panel">
-                                <summary>Archived tasks</summary>
-                                @foreach (var task in workspace.Tasks.Where(task => task.Status == PlannerStatus.Archived).Reverse())
-                                {
-                                    <PlannerTaskRow @key="task.Id" Item="task" Workspace="workspace" />
-                                }
-                            </details>
-                        }
+                        <PlannerProjects @key="(ProjectId, CreateProject)" ProjectId="ProjectId" Creating="CreateProject"
+                                         Workspace="workspace" Today="Today" Save="Apply" Busy="busy" />
                         break;
                     case "review":
                         <PlannerReview Workspace="workspace" Today="Today" Save="Apply" Busy="busy" />
                         break;
-                    case "task":
-                        <PlannerTaskEditor @key="TaskId" TaskId="TaskId" InitialProject="InitialProject" InitialMilestone="InitialMilestone"
-                                           Workspace="workspace" Today="Today" Save="Apply" Busy="busy" />
-                        break;
                     default:
                         <h1>Page unavailable</h1>
-                        <a href="/planner" class="planner-button">Back to dashboard</a>
+                        <a href="/planner" class="planner-button">Back to queue</a>
                         break;
                 }
             }
@@ -166,35 +115,40 @@
     [Parameter] public string? Section { get; set; }
     [Parameter] public Guid? ProjectId { get; set; }
     [Parameter] public Guid? TaskId { get; set; }
-    [SupplyParameterFromQuery(Name = "project")] public Guid? InitialProject { get; set; }
-    [SupplyParameterFromQuery(Name = "milestone")] public Guid? InitialMilestone { get; set; }
+    [SupplyParameterFromQuery(Name = "project")] public string? ProjectQuery { get; set; }
+    [SupplyParameterFromQuery(Name = "milestone")] public string? MilestoneQuery { get; set; }
+    [SupplyParameterFromQuery(Name = "task")] public string? TaskQuery { get; set; }
+    [SupplyParameterFromQuery(Name = "view")] public string? ViewQuery { get; set; }
+    [SupplyParameterFromQuery(Name = "sort")] public string? SortQuery { get; set; }
+    [SupplyParameterFromQuery(Name = "new")] public string? NewQuery { get; set; }
 
     private PlannerWorkspace workspace = new();
     private ClaimsPrincipal user = new();
     private bool loaded, busy, capture, focusCapture;
     private string captureTitle = "";
     private Guid? captureId;
-    private string? error, message;
-    private string planCode = "";
+    private string? error, message, loadedPage;
     private ElementReference captureInput;
     private DateOnly Today => PlannerCalendar.Today;
-    private bool CanImportPersonalPlan => !workspace.PersonalPlanAdded
-        && Configuration["Planner:PersonalPlanImportCodeHash"] is { Length: 64 };
 
-    private string Page => ProjectId is not null ? "projects" : TaskId is not null ? "task" : Section?.ToLowerInvariant() switch
+    private Guid? QueueTask => TaskId ?? ParseId(TaskQuery);
+    private string? QueueViewName => ViewQuery ?? (Section?.ToLowerInvariant() is "inbox" or "unassigned" ? "Unassigned" : null);
+    private bool CreateTask => QueueTask is null && (NewQuery == "1" || Section?.Equals("new-task", StringComparison.OrdinalIgnoreCase) == true);
+    private bool CreateProject => ProjectId is null && NewQuery == "1";
+    private static Guid? ParseId(string? value) => Guid.TryParse(value, out var id) ? id : null;
+
+    private string Page => ProjectId is not null ? "projects" : TaskId is not null ? "queue" : Section?.ToLowerInvariant() switch
     {
-        null => "dashboard",
-        "new-task" => "task",
+        null or "queue" or "board" or "inbox" or "unassigned" or "new-task" => "queue",
+        "dashboard" => "overview",
         var section => section
     };
     private string PageName => Page switch
     {
-        "dashboard" => "This week",
-        "board" => "Board",
+        "queue" => "Queue",
+        "overview" => "Week overview",
         "projects" => "Projects",
-        "inbox" => "Inbox",
         "review" => "Weekly review",
-        "task" => TaskId is null ? "New task" : "Task",
         _ => "Planner"
     };
     private string? Current(string page) => Page == page ? "page" : null;
@@ -202,9 +156,12 @@
 
     protected override async Task OnParametersSetAsync()
     {
+        var page = Page;
+        if (loaded && loadedPage == page)
+            return;
+        loadedPage = page;
         capture = false;
         focusCapture = false;
-        planCode = "";
         message = null;
         await Load();
     }
@@ -217,12 +174,6 @@
         {
             user = (await Authentication.GetAuthenticationStateAsync()).User;
             workspace = await ProjectNotes.ReadAsync(user);
-            if (!workspace.PersonalPlanAdded && Configuration["Planner:PersonalPlanUsername"] is { Length: > 0 } username
-                && user.HasClaim("preferred_username", username))
-            {
-                var today = Today;
-                workspace = await Store.ChangeAsync(user, state => PersonalPlannerPlan.Add(state, today));
-            }
             loaded = true;
         }
         catch (PlannerValidationException exception)
@@ -234,23 +185,6 @@
             Logger.LogError(exception, "Unable to load Planner");
             error = "Planner storage is unavailable. Try again in a moment.";
         }
-    }
-
-    private async Task ImportPersonalPlan()
-    {
-        var entered = planCode.Trim();
-        planCode = "";
-        var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(entered)));
-        if (!CanImportPersonalPlan || Configuration["Planner:PersonalPlanImportCodeHash"] is not { } expected
-            || !CryptographicOperations.FixedTimeEquals(Encoding.ASCII.GetBytes(hash), Encoding.ASCII.GetBytes(expected.ToUpperInvariant())))
-        {
-            message = null;
-            error = "That import code does not match.";
-            return;
-        }
-
-        var today = Today;
-        await Apply(state => PersonalPlannerPlan.Add(state, today), "Your plan was added.");
     }
 
     private void ToggleCapture()
@@ -275,7 +209,7 @@
         {
             if (state.Task(draft.Id) is null)
                 state.SaveTask(draft, Today);
-        }, "Added to Inbox.") is not null)
+        }, "Added to Unassigned.") is not null)
         {
             captureTitle = "";
             captureId = null;

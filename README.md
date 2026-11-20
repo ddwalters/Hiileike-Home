@@ -3,11 +3,18 @@ This website links myself to my other homelab hosted sites.
 
 ## Planner
 
-The **Projects** tile opens This Week. Use **Quick add** to capture ideas to the
-Inbox, **Board** to schedule and move tasks, and **Projects** for roadmaps,
-milestones, and subprojects. Open **Project Notes** from the Planner sidebar to
-choose a project, or open it directly from a project or subproject. Tasks can
-link to notes, which show backlinks to your own tasks.
+The **Projects** tile opens the work queue. In **Queue order**, the first
+task is **Next up**. Drag to reorder tasks, or open a task and use **Move up**
+and **Move down**. The order is saved, including when you reorder a filtered
+project view. Sorting by due date, priority, or title changes the view.
+
+Open a row to see its details beside the queue, or in a single pane on a
+phone. Use **Start** or **Mark done** from the details. Finishing a task
+advances to the next row in the current view. **Quick add** puts tasks and ideas
+in **Unassigned**. Assign a project, schedule the task, or move it to the backlog
+when you're ready to work on it. **Week overview** shows deadlines and reading
+checkpoints, and **Projects** holds roadmaps and milestones. Tasks can link
+to Project Notes, which show backlinks to your own tasks.
 
 Each project has its own notes and categories. Use **Manage categories** to
 add or rename categories, and **Include subproject notes** on a parent to
@@ -33,13 +40,6 @@ Project settings, task details, and milestone details each have a dashboard
 visibility control. Hiding a project also hides its subprojects and their work.
 Hidden items remain available in Planner and count toward project progress.
 **Show hidden items** temporarily includes them in the dashboard.
-
-The personal plan is added once per account as editable projects, milestones,
-tasks, and a reading checkpoint. Set `Planner__PersonalPlanUsername` to an
-Authentik username for automatic import on the first visit to Planner. The
-account can also enter its import code under **Projects → Import your plan**.
-The import reuses matching projects, milestones, and tasks and preserves
-existing priorities and reading progress.
 
 ### Storage
 

@@ -33,7 +33,7 @@
         <p class="planner-week">@PlannerCalendar.Range(week)</p>
         <h1>This week</h1>
         <div class="planner-hero-actions">
-            <a class="planner-button primary" href="/planner/board">Open board <LoreIcon Name="arrow" Size="16" /></a>
+            <a class="planner-button primary" href="/planner?view=ThisWeek">Open queue <LoreIcon Name="arrow" Size="16" /></a>
             <a class="planner-button" href="/planner/review">Weekly review</a>
         </div>
     </div>
@@ -61,7 +61,7 @@
 
 <div class="planner-dashboard-grid">
     <section class="planner-panel">
-        <div class="planner-section-heading"><h2>Top priorities</h2><a href="/planner/board">View board</a></div>
+        <div class="planner-section-heading"><h2>Top priorities</h2><a href="/planner?view=ThisWeek">View queue</a></div>
         @if (priorities.Length == 0)
         {
             <p class="planner-empty">Schedule a task for this week and give it a priority from 1 to 3.</p>

@@ -59,11 +59,41 @@ public sealed class PlannerWorkspace
     public List<ReviewDecision> Decisions { get; init; } = [];
     public List<ProgressUpdate> ProgressUpdates { get; init; } = [];
     public List<ReadingCheckpoint> Checkpoints { get; init; } = [];
-    public bool PersonalPlanAdded { get; set; }
+    public List<Guid> QueueOrder { get; init; } = [];
 
     public PlannerProject? Project(Guid? id) => Projects.Find(project => project.Id == id);
     public PlannerMilestone? Milestone(Guid? id) => Milestones.Find(milestone => milestone.Id == id);
     public PlannerTask? Task(Guid id) => Tasks.Find(task => task.Id == id);
+
+    public IEnumerable<PlannerTask> OrderedQueue(DateOnly week)
+    {
+        var remaining = Tasks.Where(task => task.IsOpen && !task.IsInbox).ToDictionary(task => task.Id);
+        foreach (var id in QueueOrder)
+            if (remaining.Remove(id, out var task))
+                yield return task;
+
+        foreach (var task in remaining.Values
+            .OrderBy(task => task.Status == PlannerStatus.InProgress ? 0 : task.Week == week ? 1 : task.Week > week ? 3 : 2)
+            .ThenBy(task => task.Week == week && task.Priority > 0 ? task.Priority : 4)
+            .ThenBy(task => task.Due ?? DateOnly.MaxValue)
+            .ThenBy(task => task.Title, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(task => task.Id))
+            yield return task;
+    }
+
+    public void ReorderQueue(Guid taskId, Guid anchorId, bool after, DateOnly week)
+    {
+        if (taskId == anchorId)
+            return;
+
+        var order = OrderedQueue(week).Select(task => task.Id).ToList();
+        if (!order.Remove(taskId) || !order.Contains(anchorId))
+            throw new PlannerValidationException("The queue changed in another tab. Reload it before reordering.");
+
+        order.Insert(order.IndexOf(anchorId) + (after ? 1 : 0), taskId);
+        QueueOrder.Clear();
+        QueueOrder.AddRange(order);
+    }
 
     public void AttachLegacyNotes(DateOnly today)
     {
@@ -228,7 +258,7 @@ public sealed class PlannerWorkspace
         var week = PlannerCalendar.WeekOf(today);
         var updated = lane switch
         {
-            PlannerLane.Backlog => task with { Status = PlannerStatus.Open, Week = null, Priority = 0 },
+            PlannerLane.Backlog => task with { Status = PlannerStatus.Open, Week = null, Priority = 0, InboxPending = false },
             PlannerLane.ThisWeek => task with
             {
                 Status = PlannerStatus.Open, Week = week, Priority = task.Week == week ? task.Priority : 0

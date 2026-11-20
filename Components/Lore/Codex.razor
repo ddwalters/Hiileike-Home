@@ -20,18 +20,28 @@
 
 <div class="app-shell">
     <aside class="sidebar">
-        <a class="brand" href="/project-notes">
+        <a class="brand" href="@(IsNotesIndex ? null : "/project-notes")">
             <span class="brand-mark"><LoreIcon Name="book" Size="24" /></span>
             <span><strong>Project Notes</strong><small>HIILĒIKE HOME</small></span>
         </a>
         <nav aria-label="Project Notes">
-            <a href="/project-notes" class="@(project is null && !loading ? "nav-item active" : "nav-item")">
-                <LoreIcon Name="back" Size="17" /><span>All projects</span>
-            </a>
+            @if (IsNotesIndex)
+            {
+                <a href="/planner/projects" class="nav-item">
+                    <LoreIcon Name="Quest" Size="17" /><span>Planner projects</span>
+                </a>
+            }
+            else
+            {
+                <a href="/project-notes" class="nav-item">
+                    <LoreIcon Name="back" Size="17" /><span>All project notes</span>
+                </a>
+            }
             @if (project is { } current)
             {
                 <p class="nav-caption">@current.Name</p>
-                <a href="@ProjectUrl(current.Id)" class="@NavClass(null)" aria-current="@(CategoryFilter is null && EntryId is null ? "page" : null)">
+                <a href="@ProjectUrl(current.Id)" class="@NavClass(null)" aria-current="@(CategoryFilter is null && EntryId is null ? "page" : null)"
+                   @onclick="ResetFilters">
                     <LoreIcon Name="grid" Size="17" /><span>All notes</span><small>@BrowsableEntries.Length</small>
                 </a>
                 @foreach (var (catalogId, category) in VisibleCategories)
@@ -62,7 +72,14 @@
                 <LoreIcon Name="book" Size="16" />
                 <a href="/planner">Planner</a>
                 <b>/</b>
-                <a href="/project-notes">Project Notes</a>
+                @if (IsNotesIndex)
+                {
+                    <span aria-current="page">Project Notes</span>
+                }
+                else
+                {
+                    <a href="/project-notes">Project Notes</a>
+                }
                 @if (project is { } breadcrumbProject)
                 {
                     <b>/</b><a href="@ProjectUrl(breadcrumbProject.Id)">@breadcrumbProject.Name</a>
@@ -264,20 +281,28 @@
             {
                 <div class="page-title">
                     <div><h1>@(NotesProjectId is null ? "Project Notes" : "Project unavailable")</h1></div>
-                    <a class="button" href="/planner/projects">Manage projects</a>
                 </div>
                 @if (workspace.Projects.Count == 0)
                 {
-                    <p class="muted">Create a project to start taking notes.</p>
+                    <div class="panel empty">
+                        <p class="muted">Create a project to start taking notes.</p>
+                        <a class="button primary" href="/planner/projects?new=1"><LoreIcon Name="plus" Size="18" /> Create a project</a>
+                    </div>
                 }
                 else
                 {
+                    var entriesByCatalog = error is null ? entries.ToLookup(entry => entry.CatalogId) : null;
                     <div class="panel notes-project-list">
                         @foreach (var (item, depth) in workspace.ProjectTree())
                         {
                             <a class="related" href="@ProjectUrl(item.Id)" style="@($"--notes-depth: {Math.Min(depth, 5)}")">
                                 <LoreIcon Name="book" Size="18" />
                                 <span><strong>@item.Name</strong></span>
+                                @if (entriesByCatalog is not null)
+                                {
+                                    var count = VisibleCatalogsFor(item).Sum(id => entriesByCatalog[id].Count());
+                                    <small class="notes-project-count">@count @(count == 1 ? "note" : "notes")</small>
+                                }
                                 <LoreIcon Name="arrow" Size="16" />
                             </a>
                         }
@@ -461,6 +486,7 @@
     private string sort = "recent";
     private bool confirmDelete;
 
+    private bool IsNotesIndex => project is null && NotesProjectId is null && EntryId is null;
     private Guid PrimaryCatalog => project?.Id ?? Guid.Empty;
     private Guid CategoryCatalog => project?.IncludesLegacyNotes == true && categoryToEdit is { } id
         && CategoriesFor(NoteCatalog.LegacyId).Any(item => item.Id == id) ? NoteCatalog.LegacyId : PrimaryCatalog;
@@ -571,13 +597,11 @@
     private string DisplayCategory(LoreEntry entry) => CategoriesFor(entry.CatalogId)
         .FirstOrDefault(category => category.Id == entry.EffectiveCategoryId)?.Name ?? entry.CategoryLabel;
 
-    private void UpdateVisibleCatalogs()
-    {
-        visibleCatalogs = project is null ? new HashSet<Guid>() : ProjectNotesWorkspace.CatalogIds(
-            project.IncludeSubprojectNotes
-                ? workspace.ProjectTree(project.Id).Select(item => item.Project).Prepend(project)
-                : [project]);
-    }
+    private IReadOnlySet<Guid> VisibleCatalogsFor(PlannerProject item) => ProjectNotesWorkspace.CatalogIds(
+        item.IncludeSubprojectNotes ? workspace.ProjectTree(item.Id).Select(child => child.Project).Prepend(item) : [item]);
+
+    private void UpdateVisibleCatalogs() =>
+        visibleCatalogs = project is null ? new HashSet<Guid>() : VisibleCatalogsFor(project);
 
     private void Refresh()
     {

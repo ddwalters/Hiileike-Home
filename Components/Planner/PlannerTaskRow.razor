@@ -1,8 +1,8 @@
-<a class="planner-task-row" href="@($"/planner/tasks/{Item.Id}")">
+<a class="planner-task-row" href="@TaskUrl">
     <span class="@($"planner-task-dot {Item.Status.ToString().ToLowerInvariant()}")" aria-hidden="true"></span>
     <span class="planner-task-copy">
         <strong>@Item.Title</strong>
-        <small>@(Workspace.Project(Item.ProjectId)?.Name ?? "Unassigned") · @Item.Status.Label()</small>
+        <small>@(Workspace.Project(Item.ProjectId)?.Name ?? "No project") · @Item.Status.Label()</small>
     </span>
     @if (Item.Due is { } date)
     {
@@ -14,4 +14,8 @@
 @code {
     [Parameter, EditorRequired] public PlannerTask Item { get; set; } = default!;
     [Parameter, EditorRequired] public PlannerWorkspace Workspace { get; set; } = default!;
+    [Parameter] public Guid? QueueProjectId { get; set; }
+
+    private string TaskUrl => QueueProjectId is { } projectId
+        ? $"/planner?project={projectId}&task={Item.Id}" : $"/planner/tasks/{Item.Id}";
 }

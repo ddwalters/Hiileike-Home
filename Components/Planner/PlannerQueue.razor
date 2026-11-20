@@ -1,0 +1,320 @@
+@inject NavigationManager Navigation
+@inject IJSRuntime JS
+@implements IAsyncDisposable
+
+@{
+    var tasks = VisibleTasks();
+    var next = CanReorder ? tasks.FirstOrDefault()?.Id : null;
+    var selectedIndex = Array.FindIndex(tasks, task => task.Id == SelectedTask);
+}
+
+<div class="@($"queue-workspace{(HasDetails ? " has-details" : "")}")" @ref="workspaceElement">
+    <section class="queue-main" aria-labelledby="queue-title">
+        <header class="queue-heading">
+            <div>
+                <h1 id="queue-title" tabindex="-1">Queue</h1>
+                <p>@PlannerCalendar.Range(Week)</p>
+            </div>
+            <div class="planner-actions">
+                <a class="queue-secondary-link" href="/planner/overview">Week overview</a>
+                <a class="planner-button primary" href="@Url(IsWorkView ? View : QueueView.Open, Sort, Filter, create: true)">
+                    <LoreIcon Name="plus" Size="17" /> New task
+                </a>
+            </div>
+        </header>
+
+        <div class="queue-filters">
+            <label>View
+                <select @bind:get="View" @bind:set="ChangeView">
+                    <option value="@QueueView.Open">Open queue</option>
+                    <option value="@QueueView.ThisWeek">This week</option>
+                    <option value="@QueueView.Backlog">Backlog</option>
+                    <option value="@QueueView.Unassigned">Unassigned (@Workspace.Tasks.Count(task => task.IsInbox))</option>
+                    <option value="@QueueView.Done">Done</option>
+                    <option value="@QueueView.Archived">Archived</option>
+                </select>
+            </label>
+            <label>Sort
+                <select @bind:get="Sort" @bind:set="ChangeSort">
+                    <option value="@QueueSort.Rank">@(IsWorkView ? "Queue order" : "Default order")</option>
+                    <option value="@QueueSort.DueDate">Due date</option>
+                    <option value="@QueueSort.Priority">Priority</option>
+                    <option value="@QueueSort.Title">Title</option>
+                </select>
+            </label>
+            <label>Project
+                <select @bind:get="Filter" @bind:set="ChangeProject" disabled="@(View == QueueView.Unassigned)">
+                    <option value="">All projects</option>
+                    @foreach (var (project, depth) in Workspace.ProjectTree())
+                    {
+                        <option value="@project.Id">@($"{new string('·', depth)} {project.Name}".TrimStart())</option>
+                    }
+                </select>
+            </label>
+        </div>
+
+        <div class="queue-list-shell">
+            <div class="queue-list-header">
+                <h2>@ViewTitle</h2>
+                <span>@tasks.Length @(tasks.Length == 1 ? "task" : "tasks")</span>
+            </div>
+            <ol class="queue-items" role="list" @ref="listElement">
+                @foreach (var task in tasks)
+                {
+                    <li @key="task.Id" data-queue-item="@task.Id" class="@RowClass(task.Id, next)">
+                        @if (CanReorder)
+                        {
+                            <span class="queue-grip" data-queue-drag draggable="true" aria-hidden="true" title="Drag to reorder">
+                                <LoreIcon Name="grip" Size="16" />
+                            </span>
+                        }
+                        <a class="queue-item-link" href="@LinkTo(task.Id)" id="@($"queue-task-{task.Id}")"
+                           aria-current="@(SelectedTask == task.Id ? "true" : null)">
+                            <span class="queue-item-copy">
+                                @if (next == task.Id)
+                                {
+                                    <small class="queue-next">Next up</small>
+                                }
+                                <strong>@task.Title</strong>
+                                @if (View != QueueView.Unassigned && (Filter is null || task.ProjectId != Filter))
+                                {
+                                    <small class="queue-item-project">@ProjectName(task)</small>
+                                }
+                            </span>
+                            <span class="queue-item-facts">
+                                @if (View is QueueView.Open or QueueView.ThisWeek)
+                                {
+                                    <span class="@($"queue-state {StateClass(task)}")">@StateLabel(task)</span>
+                                }
+                                @if (task.Due is { } due)
+                                {
+                                    <time class="@(task.IsOpen && due < Today ? "overdue" : null)"
+                                          datetime="@due.ToString("yyyy-MM-dd")">Due @due.ToString("MMM d")</time>
+                                }
+                                else if (task.IsOpen && task.Week is { } planned && planned != Week)
+                                {
+                                    <small>Week of @planned.ToString("MMM d")</small>
+                                }
+                            </span>
+                            <LoreIcon Name="arrow" Size="16" />
+                        </a>
+                    </li>
+                }
+            </ol>
+            @if (tasks.Length == 0)
+            {
+                <div class="queue-empty">
+                    <p>@EmptyText</p>
+                    @if (View == QueueView.ThisWeek || (View == QueueView.Open && Filter is null))
+                    {
+                        <a class="planner-button small" href="@Url(QueueView.Backlog, Sort, Filter)">View backlog</a>
+                    }
+                </div>
+            }
+        </div>
+    </section>
+
+    @if (HasDetails)
+    {
+        <aside class="queue-detail" aria-label="Task details">
+            <div class="queue-detail-bar">
+                <a class="queue-secondary-link" href="@LinkTo()" aria-label="Close task details">
+                    <LoreIcon Name="back" Size="16" /> Back to queue
+                </a>
+            </div>
+            <PlannerTaskEditor @key="(SelectedTask, Creating, InitialMilestone)" TaskId="SelectedTask"
+                               InitialProject="Filter" InitialMilestone="InitialMilestone"
+                               PlanThisWeek="@(View == QueueView.ThisWeek)"
+                               Workspace="Workspace" Today="Today" Save="SaveInDetails" Saved="AfterTaskSaved" Busy="Busy" />
+            @if (CanReorder && selectedIndex >= 0 && tasks.Length > 1)
+            {
+                <section class="queue-order-actions" aria-label="Reorder this task">
+                    <button type="button" class="planner-button small" disabled="@(Busy || selectedIndex == 0)"
+                            @onclick="() => Reorder(tasks[selectedIndex].Id, tasks[selectedIndex - 1].Id, false)">Move up</button>
+                    <button type="button" class="planner-button small" disabled="@(Busy || selectedIndex == tasks.Length - 1)"
+                            @onclick="() => Reorder(tasks[selectedIndex].Id, tasks[selectedIndex + 1].Id, true)">Move down</button>
+                    @if (selectedIndex > 1)
+                    {
+                        <button type="button" class="planner-button small" disabled="@Busy"
+                                @onclick="() => Reorder(tasks[selectedIndex].Id, tasks[0].Id, false)">Move to top</button>
+                    }
+                </section>
+            }
+        </aside>
+    }
+</div>
+
+@code {
+    private enum QueueView { Open, ThisWeek, Backlog, Unassigned, Done, Archived }
+    private enum QueueSort { Rank, DueDate, Priority, Title }
+
+    [Parameter, EditorRequired] public PlannerWorkspace Workspace { get; set; } = default!;
+    [Parameter, EditorRequired] public DateOnly Today { get; set; }
+    [Parameter, EditorRequired] public Func<Action<PlannerWorkspace>, string, Task<PlannerWorkspace?>> Save { get; set; } = default!;
+    [Parameter] public Guid? SelectedTask { get; set; }
+    [Parameter] public Guid? ProjectFilter { get; set; }
+    [Parameter] public Guid? InitialMilestone { get; set; }
+    [Parameter] public string? ViewName { get; set; }
+    [Parameter] public string? SortName { get; set; }
+    [Parameter] public bool Creating { get; set; }
+    [Parameter] public bool Busy { get; set; }
+
+    private ElementReference workspaceElement, listElement;
+    private IJSObjectReference? module;
+    private DotNetObjectReference<PlannerQueue>? callback;
+    private PlannerTask[] previousList = [];
+    private Guid? previousSelection, restoreFocus;
+    private bool previousCreating, focusDetails, returnFocus;
+
+    private DateOnly Week => PlannerCalendar.WeekOf(Today);
+    private Guid? Filter => View == QueueView.Unassigned ? null : Workspace.Project(ProjectFilter)?.Id;
+    private QueueView View => string.Equals(ViewName, "Inbox", StringComparison.OrdinalIgnoreCase)
+        ? QueueView.Unassigned
+        : Enum.TryParse<QueueView>(ViewName, true, out var view) && Enum.IsDefined(view) ? view : QueueView.Open;
+    private QueueSort Sort => Enum.TryParse<QueueSort>(SortName, true, out var sort) && Enum.IsDefined(sort) ? sort : QueueSort.Rank;
+    private bool IsWorkView => View is QueueView.Open or QueueView.ThisWeek or QueueView.Backlog;
+    private bool CanReorder => IsWorkView && Sort == QueueSort.Rank;
+    private bool HasDetails => SelectedTask is not null || Creating;
+    private string ViewTitle => View == QueueView.ThisWeek ? "This week" : View == QueueView.Open ? "Open work" : View.ToString();
+    private string EmptyText => View switch
+    {
+        QueueView.Unassigned => "No unassigned tasks. Use Quick add to capture a task or idea.",
+        QueueView.ThisWeek => "Nothing is planned for this week.",
+        QueueView.Done => "No completed tasks in this view.",
+        QueueView.Archived => "No archived tasks in this view.",
+        _ => "No open tasks in this view."
+    };
+
+    protected override void OnParametersSet()
+    {
+        if (previousSelection == SelectedTask && previousCreating == Creating)
+            return;
+        focusDetails = HasDetails;
+        returnFocus = !HasDetails;
+        restoreFocus = HasDetails ? null : previousSelection;
+        (previousSelection, previousCreating) = (SelectedTask, Creating);
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            module = await JS.InvokeAsync<IJSObjectReference>("import", "./planner-queue.js");
+            callback = DotNetObjectReference.Create(this);
+            await module.InvokeVoidAsync("connect", listElement, callback);
+        }
+
+        if (module is not null && (focusDetails || returnFocus))
+        {
+            await module.InvokeVoidAsync("focus", workspaceElement, focusDetails, restoreFocus?.ToString());
+            focusDetails = false;
+            returnFocus = false;
+            restoreFocus = null;
+        }
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        try
+        {
+            if (module is not null)
+            {
+                await module.InvokeVoidAsync("disconnect", listElement);
+                await module.DisposeAsync();
+            }
+        }
+        catch (JSDisconnectedException) { }
+        finally
+        {
+            callback?.Dispose();
+        }
+    }
+
+    private PlannerTask[] VisibleTasks()
+    {
+        IEnumerable<PlannerTask> ordered = IsWorkView ? Workspace.OrderedQueue(Week) : Workspace.Tasks.AsEnumerable().Reverse();
+        var scope = Filter is { } id ? Workspace.ProjectTree(id).Select(item => item.Project.Id).Append(id).ToHashSet() : null;
+        var tasks = ordered.Where(task => MatchesView(task) && (scope is null || task.ProjectId is { } projectId && scope.Contains(projectId)));
+        return (Sort switch
+        {
+            QueueSort.DueDate => tasks.OrderBy(task => task.Due ?? DateOnly.MaxValue),
+            QueueSort.Priority => tasks.OrderBy(task => task.Priority == 0 ? 4 : task.Priority),
+            QueueSort.Title => tasks.OrderBy(task => task.Title, StringComparer.OrdinalIgnoreCase),
+            _ => tasks
+        }).ToArray();
+    }
+
+    private bool MatchesView(PlannerTask task)
+    {
+        if ((View is QueueView.Open or QueueView.ThisWeek) && Filter is null && Workspace.IsDashboardHidden(task))
+            return false;
+
+        return View switch
+        {
+            QueueView.ThisWeek => task.IsOpen && !task.IsInbox && (task.Week == Week || task.Status == PlannerStatus.InProgress),
+            QueueView.Backlog => task.IsOpen && !task.IsInbox && task.Lane(Week) == PlannerLane.Backlog,
+            QueueView.Unassigned => task.IsInbox,
+            QueueView.Done => task.Status == PlannerStatus.Done,
+            QueueView.Archived => task.Status == PlannerStatus.Archived,
+            _ => task.IsOpen && !task.IsInbox
+        };
+    }
+
+    private string LinkTo(Guid? task = null) => Url(View, Sort, Filter, task);
+
+    private string Url(QueueView view, QueueSort sort, Guid? project, Guid? task = null, bool create = false) =>
+        Navigation.GetUriWithQueryParameters(Navigation.ToAbsoluteUri("/planner").AbsoluteUri, new Dictionary<string, object?>
+        {
+            ["view"] = view == QueueView.Open ? null : view.ToString(),
+            ["sort"] = sort == QueueSort.Rank ? null : sort.ToString(),
+            ["project"] = view == QueueView.Unassigned ? null : project?.ToString(),
+            ["task"] = task?.ToString(),
+            ["new"] = create ? "1" : null
+        });
+
+    private void ChangeView(QueueView view) => Navigation.NavigateTo(Url(view, Sort, Filter));
+    private void ChangeSort(QueueSort sort) => Navigation.NavigateTo(Url(View, sort, Filter, SelectedTask, Creating));
+    private void ChangeProject(Guid? project) => Navigation.NavigateTo(Url(View, Sort, project));
+
+    [JSInvokable]
+    public Task DropTask(string taskId, string anchorId, bool after) =>
+        Guid.TryParse(taskId, out var task) && Guid.TryParse(anchorId, out var anchor) && CanReorder
+            ? Reorder(task, anchor, after) : Task.CompletedTask;
+
+    private Task Reorder(Guid taskId, Guid anchorId, bool after)
+    {
+        var tasks = VisibleTasks();
+        if (Busy || !CanReorder || taskId == anchorId
+            || !tasks.Any(task => task.Id == taskId) || !tasks.Any(task => task.Id == anchorId))
+            return Task.CompletedTask;
+        var week = Week;
+        return Save(state => state.ReorderQueue(taskId, anchorId, after, week), "Queue order saved.");
+    }
+
+    private async Task<PlannerWorkspace?> SaveInDetails(Action<PlannerWorkspace> change, string confirmation)
+    {
+        previousList = VisibleTasks();
+        return await Save(change, confirmation);
+    }
+
+    private void AfterTaskSaved(PlannerTask task)
+    {
+        if (Creating)
+        {
+            Navigation.NavigateTo(LinkTo(task.Id));
+            return;
+        }
+
+        var belongsToProject = Filter is not { } projectId || Workspace.Ancestors(task.ProjectId).Any(project => project.Id == projectId);
+        if ((MatchesView(task) && belongsToProject) || !previousList.Any(item => item.Id == task.Id))
+            return;
+        var next = previousList.SkipWhile(item => item.Id != task.Id).Skip(1)
+            .FirstOrDefault() ?? previousList.FirstOrDefault(item => item.Id != task.Id);
+        Navigation.NavigateTo(LinkTo(next?.Id));
+    }
+
+    private string RowClass(Guid id, Guid? next) => $"queue-item{(SelectedTask == id ? " selected" : "")}{(next == id ? " next" : "")}";
+    private string ProjectName(PlannerTask task) => Workspace.Project(task.ProjectId)?.Name ?? "No project";
+    private string StateLabel(PlannerTask task) => task.IsOpen ? task.Lane(Week).Label() : task.Status.Label();
+    private string StateClass(PlannerTask task) => task.Status.ToString().ToLowerInvariant();
+}

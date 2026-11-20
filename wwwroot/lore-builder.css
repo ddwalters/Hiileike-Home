@@ -121,6 +121,7 @@
     .notes-project-list .related {
         margin-left: calc(var(--notes-depth) * clamp(6px, 2vw, 22px));
     }
+    .notes-project-count { flex: none; white-space: nowrap; font-variant-numeric: tabular-nums; }
     .card-top { flex-wrap: wrap; }
     .list-heading, .section-heading { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
     .list-heading > div, .card-top, .card-foot, .card-meta, .card-meta span { display: flex; align-items: center; gap: 8px; }

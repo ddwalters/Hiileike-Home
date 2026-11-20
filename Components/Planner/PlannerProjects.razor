@@ -6,7 +6,7 @@
         <div><h1>@(editing.Revision == 0 ? (editing.ParentId is null ? "New project" : "New subproject") : "Project settings")</h1></div>
     </div>
     <PlannerProjectEditor @key="editing.Id" Item="editing" Workspace="Workspace" Busy="Busy"
-                          Submit="SaveProject" Cancel="() => projectDraft = null" />
+                          Submit="SaveProject" Cancel="CancelProject" />
 }
 else if (ProjectId is null)
 {
@@ -66,6 +66,7 @@ else
             <h1>@project.Name</h1>
         </div>
         <div class="planner-actions">
+            <a href="@($"/planner?project={project.Id}")" class="planner-button">Open queue</a>
             <a href="@($"/project-notes/{project.Id}")" class="planner-button">
                 <LoreIcon Name="book" Size="17" /> Project Notes
             </a>
@@ -185,7 +186,7 @@ else
                 </div>
                 @foreach (var task in tasks.Where(task => task.MilestoneId == milestone.Id).OrderBy(task => task.Due ?? DateOnly.MaxValue))
                 {
-                    <PlannerTaskRow @key="task.Id" Item="task" Workspace="Workspace" />
+                    <PlannerTaskRow @key="task.Id" Item="task" Workspace="Workspace" QueueProjectId="project.Id" />
                 }
             </article>
         }
@@ -199,13 +200,14 @@ else
         }
         @foreach (var task in tasks.Where(task => task.MilestoneId is null).OrderBy(task => task.Due ?? DateOnly.MaxValue))
         {
-            <PlannerTaskRow @key="task.Id" Item="task" Workspace="Workspace" />
+            <PlannerTaskRow @key="task.Id" Item="task" Workspace="Workspace" QueueProjectId="project.Id" />
         }
     </section>
 }
 
 @code {
     [Parameter] public Guid? ProjectId { get; set; }
+    [Parameter] public bool Creating { get; set; }
     [Parameter, EditorRequired] public PlannerWorkspace Workspace { get; set; } = default!;
     [Parameter, EditorRequired] public DateOnly Today { get; set; }
     [Parameter, EditorRequired] public Func<Action<PlannerWorkspace>, string, Task<PlannerWorkspace?>> Save { get; set; } = default!;
@@ -220,8 +222,22 @@ else
 
     private static string ProjectUrl(Guid id) => $"/planner/projects/{id}";
 
+    protected override void OnInitialized()
+    {
+        if (Creating)
+            NewProject(null);
+    }
+
     private void NewProject(Guid? parent) =>
         projectDraft = new(Guid.NewGuid(), "", "", ProgressMeasure.Tasks, "", 0, 0, 0, parent);
+
+    private void CancelProject()
+    {
+        if (Creating)
+            Navigation.NavigateTo("/planner/projects", replace: true);
+        else
+            projectDraft = null;
+    }
 
     private async Task SaveProject(PlannerProject project)
     {
@@ -230,7 +246,7 @@ else
         projectDraft = null;
         progressValue = null;
         if (ProjectId != project.Id)
-            Navigation.NavigateTo(ProjectUrl(project.Id));
+            Navigation.NavigateTo(ProjectUrl(project.Id), replace: Creating);
     }
 
     private void NewMilestone(Guid id) => EditMilestone(new(Guid.NewGuid(), id, "", null, false, 0));
