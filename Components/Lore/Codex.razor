@@ -40,7 +40,7 @@
             @if (project is { } current)
             {
                 <p class="nav-caption">@current.Name</p>
-                <a href="@ProjectUrl(current.Id)" class="@NavClass(null)" aria-current="@(CategoryFilter is null && EntryId is null ? "page" : null)"
+                <a href="@ProjectUrl(current.Id)" class="@NavClass(null)" aria-current="@(CategoryFilter is null && !UncategorizedOnly && EntryId is null ? "page" : null)"
                    @onclick="ResetFilters">
                     <LoreIcon Name="grid" Size="17" /><span>All notes</span><small>@BrowsableEntries.Length</small>
                 </a>
@@ -50,18 +50,19 @@
                        aria-current="@(CategoryFilter?.Id == category.Id && EntryId is null ? "page" : null)">
                         <LoreIcon Name="@category.IconName" Size="17" />
                         <span>@category.Name
-                            @if (catalogId == NoteCatalog.LegacyId)
-                            {
-                                <span class="notes-source">Migrated</span>
-                            }
-                            else if (CatalogProject(catalogId)?.Id != current.Id)
+                            @if (catalogId != current.Id)
                             {
                                 <span class="notes-source">@CatalogProject(catalogId)?.Name</span>
                             }
                         </span>
-                        <small>@BrowsableEntries.Count(entry => entry.CatalogId == catalogId && entry.EffectiveCategoryId == category.Id)</small>
+                        <small>@BrowsableEntries.Count(entry => access.ProjectFor(entry) == catalogId && entry.EffectiveCategoryId == category.Id)</small>
                     </a>
                 }
+                <a href="@UncategorizedUrl(current.Id)" class="@(UncategorizedOnly ? "nav-item notes-category-nav active" : "nav-item notes-category-nav")"
+                   aria-current="@(UncategorizedOnly && EntryId is null ? "page" : null)">
+                    <LoreIcon Name="book" Size="17" /><span>Uncategorized</span>
+                    <small>@BrowsableEntries.Count(entry => entry.EffectiveCategoryId is null)</small>
+                </a>
             }
         </nav>
     </aside>
@@ -105,7 +106,8 @@
             else if (editing is not null)
             {
                 <EntryEditor @key="editing.Id" Entry="editing" Candidates="Candidates" KnownTags="AllTags" Scope="access"
-                             Categories="@CategoriesFor(editing.CatalogId)" ProjectName="@project?.Name"
+                             Categories="@CategoriesFor(access.ProjectFor(editing))" ProjectName="@project?.Name"
+                             EntryProjectName="@(entry => CatalogProject(access.ProjectFor(entry))?.Name)"
                              Saved="Saved" Closed="CancelEdit" CatalogChanged="Refresh" />
             }
             else if (quickCapture)
@@ -127,7 +129,7 @@
                             <span class="eyebrow">@(historical is null ? DisplayCategory(entry) : entry.CategoryLabel)</span>
                             @if (entry.CatalogId == NoteCatalog.LegacyId)
                             {
-                                <small class="muted">Shared legacy note</small>
+                                <small class="muted">Shared note</small>
                             }
                             <span class="status @entry.Status">@entry.Status.Label()</span>
                             @if (entry.Pinned)
@@ -178,6 +180,13 @@
                         </section>
                     </div>
                     <div class="stack">
+                        @if (historical is null)
+                        {
+                            <NoteLinks @key="entry.Id" Entry="entry" Entries="entries" Workspace="workspace" Scope="access"
+                                       Busy="savingLink" Changed="ChangeLink" />
+                        }
+                        else
+                        {
                         <section class="panel note-panel">
                             @{ var links = VisibleLinks(entry); }
                             <h2><LoreIcon Name="link" /> Linked entries <small>@links.Length</small></h2>
@@ -204,9 +213,6 @@
                                 }
                             }
                         </section>
-                        @if (historical is null)
-                        {
-                            <LoreTaskLinks @key="entry.Id" EntryId="entry.Id" />
                         }
                         <section class="panel note-panel">
                             <h2>Revision history <small>@revisions.Length</small></h2>
@@ -243,6 +249,40 @@
                             {
                                 <p class="muted">Past revisions are read-only.</p>
                             }
+                            else if (moving)
+                            {
+                                <form class="edit-section" @onsubmit="() => MoveEntry(entry)" @onsubmit:preventDefault>
+                                    <div>
+                                        <label for="note-move-project">Destination project</label>
+                                        <select id="note-move-project" required @bind="moveProject" @bind:after="ResetMoveCategory">
+                                            <option value="">Choose a project</option>
+                                            @foreach (var destination in workspace.ProjectTree().Select(item => item.Project)
+                                                .Where(destination => destination.Id != access.ProjectFor(entry)))
+                                            {
+                                                <option value="@destination.Id">@destination.Name</option>
+                                            }
+                                        </select>
+                                    </div>
+                                    <div>
+                                        <label for="note-move-category">Destination category</label>
+                                        <select id="note-move-category" @bind="moveCategory">
+                                            <option value="">Uncategorized</option>
+                                            @foreach (var category in CategoriesFor(moveProject ?? Guid.Empty))
+                                            {
+                                                <option value="@category.Id">@category.Name</option>
+                                            }
+                                        </select>
+                                    </div>
+                                    @if (entry.CatalogId == NoteCatalog.LegacyId)
+                                    {
+                                        <p class="muted">This moves the note in your workspace. Its shared access stays the same.</p>
+                                    }
+                                    <div class="actions">
+                                        <button type="submit" class="button primary" disabled="@(moveProject is null)">Move note</button>
+                                        <button type="button" class="button" @onclick="() => moving = false">Cancel</button>
+                                    </div>
+                                </form>
+                            }
                             else if (confirmDelete)
                             {
                                 <p class="muted">Delete this entry, all its revisions, and its pictures?</p>
@@ -253,7 +293,13 @@
                             }
                             else
                             {
-                                <button class="button small danger" @onclick="() => confirmDelete = true">Delete entry</button>
+                                <div class="actions">
+                                    @if (workspace.Projects.Any(destination => destination.Id != access.ProjectFor(entry)))
+                                    {
+                                        <button class="button small" @onclick="BeginMove">Move note</button>
+                                    }
+                                    <button class="button small danger" @onclick="() => confirmDelete = true">Delete entry</button>
+                                </div>
                             }
                         </section>
                     </div>
@@ -279,10 +325,13 @@
             }
             else if (project is null)
             {
+                var collections = workspace.ProjectTree().Select(item => (Collection: ProjectNoteCollection.For(item.Project), item.Depth, Archived: false))
+                    .Concat(workspace.ArchivedNoteCollections.OrderBy(item => item.Name).Select(item => (Collection: item, Depth: 0, Archived: true)))
+                    .ToArray();
                 <div class="page-title">
                     <div><h1>@(NotesProjectId is null ? "Project Notes" : "Project unavailable")</h1></div>
                 </div>
-                @if (workspace.Projects.Count == 0)
+                @if (collections.Length == 0)
                 {
                     <div class="panel empty">
                         <p class="muted">Create a project to start taking notes.</p>
@@ -291,13 +340,22 @@
                 }
                 else
                 {
-                    var entriesByCatalog = error is null ? entries.ToLookup(entry => entry.CatalogId) : null;
+                    var entriesByCatalog = error is null ? entries.ToLookup(access.ProjectFor) : null;
                     <div class="panel notes-project-list">
-                        @foreach (var (item, depth) in workspace.ProjectTree())
+                        @foreach (var (item, depth, archived) in collections)
                         {
                             <a class="related" href="@ProjectUrl(item.Id)" style="@($"--notes-depth: {Math.Min(depth, 5)}")">
                                 <LoreIcon Name="book" Size="18" />
-                                <span><strong>@item.Name</strong></span>
+                                <span><strong>@item.Name</strong>
+                                    @if (archived)
+                                    {
+                                        <small class="muted">Deleted project</small>
+                                    }
+                                    else if (workspace.IsProjectArchived(item.Id))
+                                    {
+                                        <small class="muted">Archived project</small>
+                                    }
+                                </span>
                                 @if (entriesByCatalog is not null)
                                 {
                                     var count = VisibleCatalogsFor(item).Sum(id => entriesByCatalog[id].Count());
@@ -316,7 +374,10 @@
                     <div>
                         <p class="eyebrow"><span></span> PROJECT NOTES</p>
                         <h1>@project.Name</h1>
-                        <a class="back-link" href="@($"/planner/projects/{project.Id}")">View project <LoreIcon Name="arrow" Size="15" /></a>
+                        @if (workspace.Project(project.Id) is not null)
+                        {
+                            <a class="back-link" href="@($"/planner/projects/{project.Id}")">View project <LoreIcon Name="arrow" Size="15" /></a>
+                        }
                     </div>
                     <div class="hero-emblem" aria-hidden="true">
                         <svg viewBox="0 0 230 170" fill="none">
@@ -333,7 +394,7 @@
 
                 <section class="browser" aria-labelledby="entries-heading">
                     <div class="list-heading">
-                        <div><h2 id="entries-heading">@(CategoryFilter?.Name ?? "All notes")</h2><span class="count">@visibleEntries.Length</span></div>
+                        <div><h2 id="entries-heading">@(UncategorizedOnly ? "Uncategorized" : CategoryFilter?.Name ?? "All notes")</h2><span class="count">@visibleEntries.Length</span></div>
                         @if (HasFilters)
                         {
                             <button class="button small" @onclick="ResetFilters">Clear filters</button>
@@ -348,26 +409,24 @@
                             </label>
                         }
                         <button type="button" class="button small" aria-expanded="@manageCategories" @onclick="ToggleCategories">Manage categories</button>
-                        @if (hasMigratedDraft)
+                        @if (hasDraftToRecover)
                         {
-                            <button type="button" class="button small" @onclick="RecoverMigratedDraft">Recover migrated draft</button>
+                            <button type="button" class="button small" @onclick="RecoverDraft">Recover saved draft</button>
                         }
                     </div>
-                    @if (VisibleCategories.Any())
-                    {
-                        <label class="notes-mobile-category">
-                            <span>Category</span>
-                            <select value="@CategoryFilter?.Id" @onchange="NavigateCategory">
-                                <option value="">All categories</option>
-                                @foreach (var (catalogId, category) in VisibleCategories)
-                                {
-                                    var owner = CatalogProject(catalogId);
-                                    <option value="@category.Id">@(catalogId == NoteCatalog.LegacyId ? $"{category.Name} · Migrated"
-                                        : owner is not null && owner.Id != project.Id ? $"{category.Name} · {owner.Name}" : category.Name)</option>
-                                }
-                            </select>
-                        </label>
-                    }
+                    <label class="notes-mobile-category">
+                        <span>Category</span>
+                        <select value="@(UncategorizedOnly ? "uncategorized" : CategoryFilter?.Id.ToString())" @onchange="NavigateCategory">
+                            <option value="">All categories</option>
+                            @foreach (var (catalogId, category) in VisibleCategories)
+                            {
+                                var owner = CatalogProject(catalogId);
+                                <option value="@category.Id">@(owner is not null && owner.Id != project.Id
+                                    ? $"{category.Name} · {owner.Name}" : category.Name)</option>
+                            }
+                            <option value="uncategorized">Uncategorized</option>
+                        </select>
+                    </label>
                     @if (manageCategories)
                     {
                         <form class="panel edit-section notes-categories" aria-label="Manage categories"
@@ -381,21 +440,40 @@
                                         {
                                             <option value="@category.Id">@category.Name</option>
                                         }
-                                        @if (project.IncludesLegacyNotes)
+                                    </select>
+                                </label>
+                                @if (!deletingCategory)
+                                {
+                                    <label>Category name <input required maxlength="64" @bind="categoryName" /></label>
+                                }
+                            </div>
+                            @if (deletingCategory)
+                            {
+                                <label>Move notes in @expectedCategoryName to
+                                    <select @bind="replacementCategory">
+                                        <option value="">Uncategorized</option>
+                                        @foreach (var destination in CategoriesFor(PrimaryCatalog).Where(item => item.Id != categoryToEdit))
                                         {
-                                            @foreach (var category in CategoriesFor(NoteCatalog.LegacyId))
-                                            {
-                                                <option value="@category.Id">@category.Name · Migrated</option>
-                                            }
+                                            <option value="@destination.Id">@destination.Name</option>
                                         }
                                     </select>
                                 </label>
-                                <label>Category name <input required maxlength="64" @bind="categoryName" /></label>
-                            </div>
-                            <div class="actions">
-                                <button type="submit" class="button primary">@(categoryToEdit is null ? "Add category" : "Save category")</button>
-                                <button type="button" class="button" @onclick="ToggleCategories">Close</button>
-                            </div>
+                                <div class="actions">
+                                    <button type="button" class="button danger" @onclick="DeleteCategory">Delete category</button>
+                                    <button type="button" class="button" @onclick="() => deletingCategory = false">Cancel</button>
+                                </div>
+                            }
+                            else
+                            {
+                                <div class="actions">
+                                    <button type="submit" class="button primary">@(categoryToEdit is null ? "Add category" : "Save category")</button>
+                                    @if (categoryToEdit is not null)
+                                    {
+                                        <button type="button" class="button danger" @onclick="() => deletingCategory = true">Delete category…</button>
+                                    }
+                                    <button type="button" class="button" @onclick="ToggleCategories">Close</button>
+                                </div>
+                            }
                         </form>
                     }
                     <div class="filters">
@@ -466,16 +544,18 @@
     [SupplyParameterFromQuery(Name = "category")] public string? NoteCategoryId { get; set; }
 
     private PlannerWorkspace workspace = new();
-    private PlannerProject? project;
+    private ProjectNoteCollection? project;
     private ClaimsPrincipal user = new();
-    private IReadOnlySet<Guid> access = new HashSet<Guid>();
+    private NoteScope access = new(new HashSet<Guid>());
     private IReadOnlySet<Guid> visibleCatalogs = new HashSet<Guid>();
     private Dictionary<Guid, NoteCategory[]> categories = [];
+    private IReadOnlyDictionary<Guid, Guid> categoryAliases = new Dictionary<Guid, Guid>();
+    private Dictionary<Guid, Dictionary<Guid, Guid?>> categoryReplacements = [];
     private LoreEntry[] entries = [];
     private LoreRevision[] revisions = [];
     private LoreRevision? historical;
     private LoreEntry? editing;
-    private bool quickCapture, loading, manageCategories, savingSettings, hasMigratedDraft;
+    private bool quickCapture, loading, manageCategories, savingSettings, hasDraftToRecover;
     private string? error;
     private Guid? categoryToEdit;
     private string categoryName = "";
@@ -484,31 +564,46 @@
     private string statusFilter = "";
     private string tagFilter = "";
     private string sort = "recent";
-    private bool confirmDelete;
+    private bool confirmDelete, moving, deletingCategory, savingLink;
+    private Guid? moveProject, moveCategory, replacementCategory;
 
     private bool IsNotesIndex => project is null && NotesProjectId is null && EntryId is null;
     private Guid PrimaryCatalog => project?.Id ?? Guid.Empty;
-    private Guid CategoryCatalog => project?.IncludesLegacyNotes == true && categoryToEdit is { } id
-        && CategoriesFor(NoteCatalog.LegacyId).Any(item => item.Id == id) ? NoteCatalog.LegacyId : PrimaryCatalog;
-    private LoreEntry[] BrowsableEntries => entries.Where(entry => visibleCatalogs.Contains(entry.CatalogId)).ToArray();
-    private IEnumerable<(Guid CatalogId, NoteCategory Category)> VisibleCategories => visibleCatalogs
+    private LoreEntry[] BrowsableEntries => entries.Where(entry => visibleCatalogs.Contains(access.ProjectFor(entry))).ToArray();
+    private IEnumerable<(Guid CatalogId, NoteCategory Category)> VisibleCategories => visibleCatalogs.Select(access.ProjectFor).Distinct()
         .OrderBy(id => id != PrimaryCatalog).ThenBy(id => CatalogProject(id)?.Name, StringComparer.OrdinalIgnoreCase)
         .SelectMany(id => CategoriesFor(id).Select(category => (id, category)));
-    private NoteCategory? CategoryFilter => VisibleCategories.Select(item => item.Category)
-        .FirstOrDefault(category => category.Id == RequestedCategory);
+    private NoteCategory? CategoryFilter => ResolveRequestedCategory() is { } id
+        ? VisibleCategories.Select(item => item.Category).FirstOrDefault(category => category.Id == id) : null;
+    private bool UncategorizedOnly => NoteCategoryId == "uncategorized"
+        || RequestedCategory is not null && ResolveRequestedCategory() is null;
     private Guid? RequestedCategory => Guid.TryParse(NoteCategoryId, out var id) ? id : LegacyCategoryFilter;
     private Guid? LegacyCategoryFilter => visibleCatalogs.Contains(NoteCatalog.LegacyId)
         && Enum.TryParse<EntryKind>(KindQueryValue, out var kind) ? NoteCatalog.LegacyCategory(kind)?.Id : null;
-    private string CategoryQuery => CategoryFilter is { } category ? $"?category={category.Id}" : "";
+    private string CategoryQuery => UncategorizedOnly ? "?category=uncategorized"
+        : CategoryFilter is { } category ? $"?category={category.Id}" : "";
     private Guid? NewNoteCategory => CategoriesFor(PrimaryCatalog).Any(item => item.Id == CategoryFilter?.Id) ? CategoryFilter?.Id : null;
-    private string ListUrl => project is null ? "/project-notes" : ProjectUrl(project.Id, CategoryFilter?.Id);
-    private LoreEntry? Selected => RevisionNumber is null
-        ? revisions.LastOrDefault()?.Entry : historical?.Entry;
-    private LoreEntry[] Candidates => editing is null ? [] : entries.Where(entry => entry.Id != editing.Id
-        && NoteCatalog.CanLink(editing.CatalogId, entry.CatalogId)).ToArray();
+    private string ListUrl => project is null ? "/project-notes" : ProjectUrl(project.Id) + CategoryQuery;
+    private LoreEntry? CurrentEntry => entries.FirstOrDefault(entry => entry.Id == EntryId);
+    private LoreEntry? Selected => RevisionNumber is null ? CurrentEntry : historical?.Entry;
+    private LoreEntry[] Candidates => editing is null ? [] : entries.Where(entry => entry.Id != editing.Id).ToArray();
     private bool HasFilters => search.Trim().Length > 0 || statusFilter.Length > 0 || tagFilter.Length > 0;
     private IEnumerable<string> AllTags => BrowsableEntries.SelectMany(entry => entry.Tags)
         .Distinct(StringComparer.OrdinalIgnoreCase).Order(StringComparer.OrdinalIgnoreCase);
+
+    private Guid? ResolveRequestedCategory()
+    {
+        if (RequestedCategory is not { } id)
+            return null;
+        if (VisibleCategories.Any(item => item.Category.Id == id))
+            return id;
+        if (visibleCatalogs.Contains(NoteCatalog.LegacyId))
+            id = categoryAliases.GetValueOrDefault(id, id);
+        foreach (var projectId in visibleCatalogs.Select(access.ProjectFor).Distinct())
+            if (categoryReplacements.GetValueOrDefault(projectId)?.TryGetValue(id, out var replacement) == true)
+                return replacement;
+        return id;
+    }
 
     private LoreEntry[] VisibleEntries
     {
@@ -517,7 +612,7 @@
             var terms = search.Split(' ', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
             var category = CategoryFilter;
             var filtered = BrowsableEntries.Where(entry =>
-                (category is null || entry.EffectiveCategoryId == category.Id)
+                (UncategorizedOnly ? entry.EffectiveCategoryId is null : category is null || entry.EffectiveCategoryId == category.Id)
                 && (statusFilter.Length == 0 || entry.Status.ToString() == statusFilter)
                 && (tagFilter.Length == 0 || entry.Tags.Contains(tagFilter, StringComparer.OrdinalIgnoreCase))
                 && terms.All(term => Matches(entry, term)));
@@ -536,14 +631,16 @@
         editing = null;
         quickCapture = false;
         confirmDelete = false;
+        moving = false;
         manageCategories = false;
+        deletingCategory = false;
         error = null;
         loading = true;
         try
         {
             user = (await Authentication.GetAuthenticationStateAsync()).User;
             workspace = await ProjectNotes.ReadAsync(user);
-            access = ProjectNotesWorkspace.CatalogIds(workspace.Projects);
+            access = ProjectNotesWorkspace.Access(workspace);
             Refresh();
         }
         catch (Exception ex) when (IsStorageError(ex) || ex is PlannerValidationException)
@@ -570,16 +667,19 @@
         || entry.CategoryLabel.Contains(term, StringComparison.OrdinalIgnoreCase)
         || entry.Tags.Any(tag => tag.Contains(term, StringComparison.OrdinalIgnoreCase));
 
-    private string NavClass(Guid? category) => CategoryFilter?.Id == category
+    private string NavClass(Guid? category) => !UncategorizedOnly && CategoryFilter?.Id == category
         ? "nav-item notes-category-nav active" : "nav-item notes-category-nav";
 
     private static string ProjectUrl(Guid id, Guid? category = null) =>
         category is { } filter ? $"/project-notes/{id}?category={filter}" : $"/project-notes/{id}";
 
+    private static string UncategorizedUrl(Guid id) => ProjectUrl(id) + "?category=uncategorized";
+
     private void NavigateCategory(ChangeEventArgs args)
     {
         if (project is { } current)
-            Navigation.NavigateTo(ProjectUrl(current.Id, Guid.TryParse(args.Value?.ToString(), out var id) ? id : null));
+            Navigation.NavigateTo(args.Value?.ToString() == "uncategorized" ? UncategorizedUrl(current.Id)
+                : ProjectUrl(current.Id, Guid.TryParse(args.Value?.ToString(), out var id) ? id : null));
     }
 
     private string EntryUrl(Guid id) => $"/project-notes/entry/{id}{CategoryQuery}";
@@ -592,13 +692,13 @@
 
     private void ResetFilters() => search = statusFilter = tagFilter = "";
 
-    private PlannerProject? CatalogProject(Guid id) => ProjectNotesWorkspace.FindProject(workspace, id);
+    private ProjectNoteCollection? CatalogProject(Guid id) => ProjectNotesWorkspace.FindCollection(workspace, id);
     private NoteCategory[] CategoriesFor(Guid id) => categories.GetValueOrDefault(id) ?? [];
-    private string DisplayCategory(LoreEntry entry) => CategoriesFor(entry.CatalogId)
+    private string DisplayCategory(LoreEntry entry) => CategoriesFor(access.ProjectFor(entry))
         .FirstOrDefault(category => category.Id == entry.EffectiveCategoryId)?.Name ?? entry.CategoryLabel;
 
-    private IReadOnlySet<Guid> VisibleCatalogsFor(PlannerProject item) => ProjectNotesWorkspace.CatalogIds(
-        item.IncludeSubprojectNotes ? workspace.ProjectTree(item.Id).Select(child => child.Project).Prepend(item) : [item]);
+    private IReadOnlySet<Guid> VisibleCatalogsFor(ProjectNoteCollection item) => ProjectNotesWorkspace.CatalogIds(
+        item.IncludeSubprojectNotes ? workspace.ProjectTree(item.Id).Select(child => ProjectNoteCollection.For(child.Project)).Prepend(item) : [item]);
 
     private void UpdateVisibleCatalogs() =>
         visibleCatalogs = project is null ? new HashSet<Guid>() : VisibleCatalogsFor(project);
@@ -608,17 +708,19 @@
         try
         {
             categories = Store.Categories(access);
+            categoryAliases = Store.CategoryAliases(access);
+            categoryReplacements = Store.CategoryReplacements(access);
             (entries, revisions) = Store.Snapshot(EntryId, access);
             entries = entries.Select(entry => entry with { CategoryName = DisplayCategory(entry) }).ToArray();
             historical = revisions.FirstOrDefault(version => version.Entry.Revision == RevisionNumber);
             project = EntryId is not null
-                ? revisions.LastOrDefault() is { } current ? CatalogProject(current.Entry.CatalogId) : null
-                : NotesProjectId is { } id ? workspace.Project(id)
+                ? CurrentEntry is { } current ? CatalogProject(access.ProjectFor(current)) : null
+                : NotesProjectId is { } id ? CatalogProject(id)
                 : Navigation.ToBaseRelativePath(Navigation.Uri).Split('?')[0].TrimEnd('/').Equals("lore", StringComparison.OrdinalIgnoreCase)
-                    ? workspace.Projects.FirstOrDefault(item => item.IncludesLegacyNotes)
+                    ? CatalogProject(NoteCatalog.LegacyId)
                     : null;
             UpdateVisibleCatalogs();
-            hasMigratedDraft = EntryId is null && project?.IncludesLegacyNotes == true && MigratedDraftExists();
+            hasDraftToRecover = EntryId is null && project?.IncludesLegacyNotes == true && SavedDraftExists();
             if (tagFilter.Length > 0)
                 tagFilter = AllTags.FirstOrDefault(tag => tag.Equals(tagFilter, StringComparison.OrdinalIgnoreCase)) ?? "";
         }
@@ -635,7 +737,7 @@
     private static bool IsStorageError(Exception ex) => ex is IOException or UnauthorizedAccessException
         or System.Text.Json.JsonException or System.Data.Common.DbException;
 
-    private bool MigratedDraftExists()
+    private bool SavedDraftExists()
     {
         try
         {
@@ -643,7 +745,7 @@
         }
         catch (Exception ex) when (IsStorageError(ex))
         {
-            Logger.LogWarning(ex, "Could not check for the migrated draft.");
+            Logger.LogWarning(ex, "Could not check for the saved notes draft.");
             return false;
         }
     }
@@ -654,6 +756,7 @@
     {
         error = null;
         confirmDelete = false;
+        moving = false;
         editing = entry;
     }
 
@@ -690,6 +793,73 @@
         }
     }
 
+    private void BeginMove()
+    {
+        moveProject = moveCategory = null;
+        moving = true;
+    }
+
+    private async Task ChangeLink(NoteLinks.LinkChange link)
+    {
+        if (savingLink || Selected is not { } entry || historical is not null)
+            return;
+        savingLink = true;
+        error = null;
+        try
+        {
+            if (link.Kind is { } kind)
+            {
+                workspace = await Planner.ChangeAsync(user, state => state.SetNoteLink(entry.Id, kind, link.Id, link.Linked));
+            }
+            else
+            {
+                var noteLinks = link.Linked ? entry.Links.Append(link.Id).Distinct().ToArray()
+                    : entry.Links.Where(id => id != link.Id).ToArray();
+                Store.Save(entry with { Links = noteLinks }, [], access, entry.Links);
+                Refresh();
+            }
+        }
+        catch (Exception ex) when (ex is PlannerValidationException or InvalidOperationException)
+        {
+            error = ex.Message;
+        }
+        catch (Exception ex) when (IsStorageError(ex))
+        {
+            Logger.LogError(ex, "Could not update a link for note {EntryId}.", entry.Id);
+            error = "The link could not be updated.";
+        }
+        finally
+        {
+            savingLink = false;
+        }
+    }
+
+    private void ResetMoveCategory() => moveCategory = null;
+
+    private void MoveEntry(LoreEntry entry)
+    {
+        if (moveProject is not { } destination)
+            return;
+        error = null;
+        try
+        {
+            Store.Move(entry.Id, entry.Revision, destination, moveCategory, access);
+            moving = false;
+            ResetFilters();
+            Refresh();
+            Navigation.NavigateTo($"/project-notes/entry/{entry.Id}");
+        }
+        catch (InvalidOperationException ex)
+        {
+            error = ex.Message;
+        }
+        catch (Exception ex) when (IsStorageError(ex))
+        {
+            Logger.LogError(ex, "Could not move note {EntryId}.", entry.Id);
+            error = "The note could not be moved.";
+        }
+    }
+
     private void ToggleCategories()
     {
         manageCategories = !manageCategories;
@@ -699,16 +869,43 @@
 
     private void ChooseCategory()
     {
-        expectedCategoryName = CategoriesFor(CategoryCatalog).FirstOrDefault(category => category.Id == categoryToEdit)?.Name;
+        deletingCategory = false;
+        replacementCategory = null;
+        expectedCategoryName = CategoriesFor(PrimaryCatalog).FirstOrDefault(category => category.Id == categoryToEdit)?.Name;
         categoryName = expectedCategoryName ?? "";
+    }
+
+    private void DeleteCategory()
+    {
+        if (categoryToEdit is not { } id || expectedCategoryName is not { } name)
+            return;
+        error = null;
+        try
+        {
+            Store.DeleteCategory(PrimaryCatalog, id, name, replacementCategory, access);
+            Refresh();
+            categoryToEdit = null;
+            ChooseCategory();
+        }
+        catch (InvalidOperationException ex)
+        {
+            error = ex.Message;
+        }
+        catch (Exception ex) when (IsStorageError(ex))
+        {
+            Logger.LogError(ex, "Could not delete Project Notes category {CategoryId}.", id);
+            error = "The category could not be deleted.";
+        }
     }
 
     private void SaveCategory()
     {
+        if (deletingCategory)
+            return;
         error = null;
         try
         {
-            Store.SaveCategory(CategoryCatalog, categoryToEdit, categoryName, expectedCategoryName, access);
+            Store.SaveCategory(PrimaryCatalog, categoryToEdit, categoryName, expectedCategoryName, access);
             Refresh();
             categoryToEdit = null;
             ChooseCategory();
@@ -724,7 +921,7 @@
         }
     }
 
-    private void RecoverMigratedDraft()
+    private void RecoverDraft()
     {
         error = null;
         try
@@ -737,8 +934,8 @@
         }
         catch (Exception ex) when (IsStorageError(ex))
         {
-            Logger.LogError(ex, "Could not recover the migrated draft.");
-            error = "The migrated draft could not be recovered.";
+            Logger.LogError(ex, "Could not recover the saved notes draft.");
+            error = "The saved draft could not be recovered.";
         }
     }
 
@@ -758,7 +955,7 @@
                 var current = state.Project(id) ?? throw new PlannerValidationException("This project is unavailable.");
                 state.SaveProject(current with { IncludeSubprojectNotes = include }, PlannerCalendar.Today);
             });
-            project = workspace.Project(id);
+            project = CatalogProject(id);
             UpdateVisibleCatalogs();
         }
         catch (Exception ex) when (IsStorageError(ex) || ex is PlannerValidationException)

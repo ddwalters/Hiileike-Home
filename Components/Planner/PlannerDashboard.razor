@@ -1,8 +1,10 @@
 @{
     var week = PlannerCalendar.WeekOf(Today);
     var end = week.AddDays(6);
-    var tasks = Workspace.Tasks.Where(task => showHidden || !Workspace.IsDashboardHidden(task)).ToArray();
-    var milestones = Workspace.Milestones.Where(item => showHidden || !Workspace.IsDashboardHidden(item)).ToArray();
+    var tasks = Workspace.Tasks.Where(task => !Workspace.IsProjectArchived(task.ProjectId)
+        && (showHidden || !Workspace.IsDashboardHidden(task))).ToArray();
+    var milestones = Workspace.Milestones.Where(item => !Workspace.IsProjectArchived(item.ProjectId)
+        && (showHidden || !Workspace.IsDashboardHidden(item))).ToArray();
     var visibleTaskIds = tasks.Select(task => task.Id).ToHashSet();
     var planned = tasks.Where(task => task.IsOpen && task.Week == week).ToArray();
     var priorities = planned.Where(task => task.Priority > 0).OrderBy(task => task.Priority).ToArray();
@@ -11,18 +13,19 @@
     var deadlines = tasks.Where(task => task.IsOpen && task.Due <= end)
         .Select(task => new Deadline(task.Title, $"/planner/tasks/{task.Id}", task.Due!.Value, Workspace.Project(task.ProjectId)?.Name ?? "Task"))
         .Concat(milestones.Where(item => !item.Done && item.Due <= end)
-            .Select(item => new Deadline(item.Title, $"/planner/projects/{item.ProjectId}", item.Due!.Value, "Milestone")))
+            .Select(item => new Deadline(item.Title, $"/planner/projects/{item.ProjectId}#milestone-{item.Id}", item.Due!.Value, "Milestone")))
         .OrderBy(item => item.Day).ThenBy(item => item.Title).ToArray();
     var completions = Workspace.Completions.Where(item => item.Day >= week && item.Day <= end && visibleTaskIds.Contains(item.TaskId))
         .DistinctBy(item => item.TaskId).Count();
     var overdue = deadlines.Count(item => item.Day < Today);
     var carryover = tasks.Count(task => task.IsOpen && task.Week < week);
-    var checkpoints = Workspace.Checkpoints.Where(item => item.Week == week).ToArray();
+    var checkpoints = Workspace.Checkpoints.Where(item => item.Week == week && !Workspace.IsProjectArchived(item.ProjectId)).ToArray();
     var focusedIds = active.Select(task => task.ProjectId)
         .Concat(tasks.Where(task => task.IsOpen && task.Due <= end).Select(task => task.ProjectId))
         .Concat(milestones.Where(item => !item.Done && item.Due >= week && item.Due <= end).Select(item => (Guid?)item.ProjectId))
         .Concat(checkpoints.Select(item => (Guid?)item.ProjectId)).ToHashSet();
-    var projects = Workspace.Projects.Where(project => showHidden || !Workspace.IsDashboardHidden(project.Id))
+    var projects = Workspace.Projects.Where(project => !Workspace.IsProjectArchived(project.Id)
+        && (showHidden || !Workspace.IsDashboardHidden(project.Id)))
         .OrderByDescending(project => focusedIds.Contains(project.Id)).ThenBy(project => project.Name).ToArray();
     var hasHidden = Workspace.Projects.Any(project => project.HiddenFromDashboard)
         || Workspace.Tasks.Any(task => task.HiddenFromDashboard) || Workspace.Milestones.Any(item => item.HiddenFromDashboard);
@@ -117,7 +120,7 @@
         <div class="planner-section-heading"><h2>Project progress</h2><a href="/planner/projects">All projects</a></div>
         @if (projects.Length == 0)
         {
-            <p class="planner-empty">@(hasHidden ? "No projects visible on the dashboard." : "Create a project to track tasks, milestones, or a numeric goal.")</p>
+            <p class="planner-empty">@(hasHidden ? "No projects visible in Week overview." : "Create a project to track tasks, milestones, or a numeric goal.")</p>
         }
         @foreach (var project in projects)
         {

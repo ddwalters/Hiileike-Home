@@ -13,15 +13,17 @@ public sealed record LoreLink(Guid Id, EntryKind? Kind, string Title, Guid? Cate
     [JsonIgnore] public string IconName => NoteCatalog.LegacyCategory(Kind)?.IconName ?? "book";
 }
 public sealed record LoreRevision(LoreEntry Entry, LoreLink[] Links);
-public sealed record LoreDraft(Guid Stamp, LoreEntry Entry, string Tags);
+public sealed record LoreDraft(Guid Stamp, LoreEntry Entry, string Tags, Guid? WorkspaceProject = null);
 
 public sealed record LoreEntry(
     Guid Id, EntryKind? Kind, EntryStatus Status, string Title, string Summary,
     string Notes, string Implementation, string[] Tags, bool Pinned,
     Guid[] Links, Picture[] Pictures, DateTimeOffset Updated, int Revision,
-    Guid? ProjectId = null, Guid? CategoryId = null, string? CategoryName = null)
+    Guid? ProjectId = null, Guid? CategoryId = null, string? CategoryName = null,
+    Dictionary<Guid, NoteCategorySelection>? ProjectCategories = null)
 {
     [JsonIgnore] public Guid CatalogId => ProjectId ?? NoteCatalog.LegacyId;
+    [JsonIgnore] public Guid? WorkspaceProjectId { get; init; }
     [JsonIgnore] public Guid? EffectiveCategoryId => CategoryId ?? NoteCatalog.LegacyCategory(Kind)?.Id;
     [JsonIgnore] public string CategoryLabel => CategoryName ?? NoteCatalog.LegacyCategory(Kind)?.Name ?? "Uncategorized";
     [JsonIgnore] public string IconName => NoteCatalog.LegacyCategory(Kind)?.IconName ?? "book";
@@ -36,6 +38,16 @@ public sealed record LoreEntry(
 public sealed record NoteCategory(Guid Id, string Name, EntryKind? LegacyKind = null)
 {
     [JsonIgnore] public string IconName => LegacyKind?.ToString() ?? "book";
+}
+
+public sealed record NoteCategorySelection(Guid? Id, string? Name, Guid? ProjectId = null);
+
+public sealed record NoteScope(IReadOnlySet<Guid> Catalogs, Guid? SharedNotesProject = null)
+{
+    public Guid ProjectFor(Guid catalogId) =>
+        catalogId == NoteCatalog.LegacyId && SharedNotesProject is { } projectId ? projectId : catalogId;
+
+    public Guid ProjectFor(LoreEntry entry) => entry.WorkspaceProjectId ?? ProjectFor(entry.CatalogId);
 }
 
 public static class NoteCatalog
@@ -54,9 +66,6 @@ public static class NoteCatalog
 
     public static NoteCategory? LegacyCategory(EntryKind? kind) =>
         kind is null ? null : LegacyCategories.FirstOrDefault(category => category.LegacyKind == kind);
-
-    // Reciprocal links in the shared legacy catalog must not expose private notes.
-    public static bool CanLink(Guid left, Guid right) => left == right || (left != LegacyId && right != LegacyId);
 }
 
 public static class LoreLabels

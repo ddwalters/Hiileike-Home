@@ -22,9 +22,9 @@ else if (!editing)
     {
         <p class="planner-muted">This task was broken down during <a href="/planner/review">weekly review</a>.</p>
     }
-    else
-    {
-        <div class="planner-actions queue-task-actions">
+    <div class="planner-actions queue-task-actions">
+        @if (draft.Status != PlannerStatus.Replaced)
+        {
             @if (draft.IsOpen)
             {
                 <button type="button" class="planner-button primary" disabled="@Busy" @onclick="() => Move(PlannerLane.Done)">Mark done</button>
@@ -41,8 +41,12 @@ else if (!editing)
                 }
             }
             <button type="button" class="planner-button" disabled="@Busy" @onclick="BeginEditing">Edit</button>
-        </div>
-    }
+            <button type="button" class="planner-button" disabled="@Busy" @onclick="ToggleArchive">
+                @(draft.Status == PlannerStatus.Archived ? "Restore task" : "Archive task")
+            </button>
+        }
+        <button type="button" class="planner-button danger" disabled="@Busy" @onclick="Delete">Delete task</button>
+    </div>
     <dl class="queue-task-metadata">
         <div>
             <dt>Project</dt>
@@ -147,7 +151,7 @@ else
                 </select>
             </label>
         </div>
-        <label class="planner-checkbox"><input type="checkbox" @bind="hidden" /> Hide this task from the dashboard</label>
+        <label class="planner-checkbox"><input type="checkbox" @bind="hidden" /> Hide this task from Queue and Week overview</label>
         <fieldset class="planner-lore-links">
             <legend><LoreIcon Name="link" Size="18" /> Linked notes</legend>
             @if (loreUnavailable)
@@ -216,6 +220,7 @@ else
     [Parameter, EditorRequired] public DateOnly Today { get; set; }
     [Parameter, EditorRequired] public Func<Action<PlannerWorkspace>, string, Task<PlannerWorkspace?>> Save { get; set; } = default!;
     [Parameter, EditorRequired] public EventCallback<PlannerTask> Saved { get; set; }
+    [Parameter, EditorRequired] public EventCallback<Guid> Deleted { get; set; }
     [Parameter] public bool Busy { get; set; }
 
     private PlannerTask? draft;
@@ -258,11 +263,11 @@ else
             return;
         try
         {
-            var scope = ProjectNotesWorkspace.CatalogIds(Workspace.Projects);
+            var scope = ProjectNotesWorkspace.Access(Workspace);
             var categories = Lore.Categories(scope);
             loreEntries = Lore.Snapshot(null, scope).Entries.Select(entry => entry with
                 {
-                    CategoryName = categories.GetValueOrDefault(entry.CatalogId)?
+                    CategoryName = categories.GetValueOrDefault(scope.ProjectFor(entry))?
                         .FirstOrDefault(category => category.Id == entry.EffectiveCategoryId)?.Name ?? entry.CategoryLabel
                 }).OrderBy(item => item.Title).ToArray();
             loreLoaded = true;
@@ -318,7 +323,7 @@ else
 
     private void ProjectChanged() => milestoneId = null;
     private string NoteContext(LoreEntry entry) =>
-        $"{ProjectNotesWorkspace.FindProject(Workspace, entry.CatalogId)?.Name} · {entry.CategoryLabel}";
+        $"{ProjectNotesWorkspace.FindCollection(Workspace, entry.WorkspaceProjectId ?? entry.CatalogId)?.Name} · {entry.CategoryLabel}";
     private void ScheduleThisWeek() => week = PlannerCalendar.WeekOf(Today);
     private void ClearWeek()
     {
@@ -361,6 +366,30 @@ else
         {
             SetDraft(task);
             await Saved.InvokeAsync(task);
+        }
+    }
+
+    private async Task Delete()
+    {
+        if (Busy || draft is not { } task
+            || !await JS.InvokeAsync<bool>("confirm", $"Permanently delete the task “{task.Title}” and its weekly review history?"))
+            return;
+
+        if (await Save(state => state.DeleteTask(task), "Task deleted.") is not null)
+            await Deleted.InvokeAsync(task.Id);
+    }
+
+    private async Task ToggleArchive()
+    {
+        if (Busy || draft is not { } task)
+            return;
+        var archived = task.Status != PlannerStatus.Archived;
+        var saved = await Save(state => state.SetTaskArchived(task, archived, Today),
+            archived ? "Task archived." : "Task restored.");
+        if (saved?.Task(task.Id) is { } updated)
+        {
+            SetDraft(updated);
+            await Saved.InvokeAsync(updated);
         }
     }
 }

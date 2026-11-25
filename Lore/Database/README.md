@@ -110,9 +110,11 @@ erDiagram
 - `entries` holds the current searchable fields, project catalog ID, and
   revision number. The optional legacy kind identifies original categories.
   Statuses are Idea 0, Planned 1, In progress 2, and Implemented 3.
-- `note_categories` stores names for each project's user-defined categories,
-  including any renamed categories from the original catalog. Revisions keep
-  the category name recorded when the note was saved.
+- `note_categories` stores each project's categories. Revisions keep the
+  category name recorded when the note was saved. Deleted category records
+  resolve existing note, draft, and bookmark references to their replacement.
+- `project_category_imports` maps original category IDs to regular project
+  categories so existing references still resolve.
 - `entry_links` stores each reciprocal connection once, with the smaller UUID first.
 - `tags` has a case-insensitive unique name. `entry_tags` preserves display order.
 - `entry_revisions.snapshot` holds the complete historical entry as JSONB,
@@ -122,9 +124,9 @@ erDiagram
   `pictures` subfolder of `Lore__DataDirectory`.
 - `revision_pictures` records which pictures appeared in each revision, in order.
   Removing a picture from the current entry retains it for historical revisions.
-- `drafts` has one slot per existing entry and one new-entry slot per project catalog.
-  The new-entry slot has a null `entry_id`. Draft stamps prevent one editor from
-  silently overwriting another editor's draft.
+- `drafts` has one editing slot per entry per project and one new-entry slot
+  per project. The new-entry slot has a null `entry_id`. Draft stamps prevent
+  one editor from silently overwriting another editor's draft.
 - `schema_migrations` records the installed schema version.
 
 Deleting an entry cascades through its revisions, links, tag assignments, picture

@@ -218,6 +218,12 @@
     .related strong { display: block; font-size: .85rem; }
     .related small { display: block; font-size: .72rem; }
     .related > svg { color: var(--muted); }
+    .note-link-picker { margin: 10px 0; }
+    .note-link-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+    .note-link-row > span, .note-link-row > a { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+    .note-link-row > span > small { display: block; }
+    .note-link-row > .related > span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+    .note-link-row .button { flex: none; }
     .revision-list { max-height: 16rem; overflow: auto; }
     .revision-link[aria-current="page"], .revision-link:hover { border-color: var(--accent); }
     .revision-link strong, .revision-link small { overflow-wrap: anywhere; }

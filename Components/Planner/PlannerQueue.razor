@@ -98,6 +98,24 @@
                             </span>
                             <LoreIcon Name="arrow" Size="16" />
                         </a>
+                        <div class="queue-row-actions">
+                            <button type="button" class="planner-button small queue-more"
+                                    aria-label="@($"Actions for {task.Title}")" aria-expanded="@(actionsTask == task.Id)"
+                                    disabled="@Busy" @onclick="() => actionsTask = actionsTask == task.Id ? null : task.Id">
+                                <span aria-hidden="true">•••</span>
+                            </button>
+                            @if (actionsTask == task.Id)
+                            {
+                                <div class="queue-row-menu" aria-label="@($"Actions for {task.Title}")">
+                                    <button type="button" class="planner-button small" disabled="@Busy" @onclick="() => ToggleTaskArchive(task)">
+                                        @(task.Status == PlannerStatus.Archived ? "Restore task" : "Archive task")
+                                    </button>
+                                    <button type="button" class="planner-button small danger" disabled="@Busy" @onclick="() => DeleteTask(task)">
+                                        Delete task
+                                    </button>
+                                </div>
+                            }
+                        </div>
                     </li>
                 }
             </ol>
@@ -125,7 +143,8 @@
             <PlannerTaskEditor @key="(SelectedTask, Creating, InitialMilestone)" TaskId="SelectedTask"
                                InitialProject="Filter" InitialMilestone="InitialMilestone"
                                PlanThisWeek="@(View == QueueView.ThisWeek)"
-                               Workspace="Workspace" Today="Today" Save="SaveInDetails" Saved="AfterTaskSaved" Busy="Busy" />
+                               Workspace="Workspace" Today="Today" Save="SaveInDetails" Saved="AfterTaskSaved"
+                               Deleted="AfterTaskDeleted" Busy="Busy" />
             @if (CanReorder && selectedIndex >= 0 && tasks.Length > 1)
             {
                 <section class="queue-order-actions" aria-label="Reorder this task">
@@ -164,6 +183,7 @@
     private DotNetObjectReference<PlannerQueue>? callback;
     private PlannerTask[] previousList = [];
     private Guid? previousSelection, restoreFocus;
+    private Guid? actionsTask;
     private bool previousCreating, focusDetails, returnFocus;
 
     private DateOnly Week => PlannerCalendar.WeekOf(Today);
@@ -246,6 +266,8 @@
 
     private bool MatchesView(PlannerTask task)
     {
+        if (IsWorkView && Workspace.IsProjectArchived(task.ProjectId) && !Workspace.IsProjectArchived(Filter))
+            return false;
         if ((View is QueueView.Open or QueueView.ThisWeek) && Filter is null && Workspace.IsDashboardHidden(task))
             return false;
 
@@ -308,10 +330,39 @@
         var belongsToProject = Filter is not { } projectId || Workspace.Ancestors(task.ProjectId).Any(project => project.Id == projectId);
         if ((MatchesView(task) && belongsToProject) || !previousList.Any(item => item.Id == task.Id))
             return;
-        var next = previousList.SkipWhile(item => item.Id != task.Id).Skip(1)
-            .FirstOrDefault() ?? previousList.FirstOrDefault(item => item.Id != task.Id);
-        Navigation.NavigateTo(LinkTo(next?.Id));
+        Navigation.NavigateTo(LinkTo(NextTask(task.Id)));
     }
+
+    private void AfterTaskDeleted(Guid id)
+    {
+        if (SelectedTask == id)
+            Navigation.NavigateTo(LinkTo(previousList.Any(item => item.Id == id) ? NextTask(id) : null), replace: true);
+    }
+
+    private async Task DeleteTask(PlannerTask task)
+    {
+        if (Busy || !await JS.InvokeAsync<bool>("confirm", $"Permanently delete the task “{task.Title}” and its weekly review history?"))
+            return;
+        if (await SaveInDetails(state => state.DeleteTask(task), "Task deleted.") is null)
+            return;
+        actionsTask = null;
+        AfterTaskDeleted(task.Id);
+    }
+
+    private async Task ToggleTaskArchive(PlannerTask task)
+    {
+        var archived = task.Status != PlannerStatus.Archived;
+        var saved = await SaveInDetails(state => state.SetTaskArchived(task, archived, Today),
+            archived ? "Task archived." : "Task restored.");
+        if (saved?.Task(task.Id) is not { } updated)
+            return;
+        actionsTask = null;
+        if (SelectedTask == task.Id)
+            AfterTaskSaved(updated);
+    }
+
+    private Guid? NextTask(Guid id) => (previousList.SkipWhile(item => item.Id != id).Skip(1).FirstOrDefault()
+        ?? previousList.FirstOrDefault(item => item.Id != id))?.Id;
 
     private string RowClass(Guid id, Guid? next) => $"queue-item{(SelectedTask == id ? " selected" : "")}{(next == id ? " next" : "")}";
     private string ProjectName(PlannerTask task) => Workspace.Project(task.ProjectId)?.Name ?? "No project";

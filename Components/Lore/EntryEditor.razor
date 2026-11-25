@@ -104,12 +104,9 @@ else
             <section class="panel edit-section">
                 <h2><LoreIcon Name="link" /> Linked entries</h2>
                 <small class="muted">Links appear on both entries.</small>
-                @if (Entry.CatalogId != NoteCatalog.LegacyId)
-                {
-                    <button type="button" class="button small" @onclick="() => linkedCapture = true" disabled="@linkedCapture">
-                        <LoreIcon Name="plus" Size="16" /> Create linked note
-                    </button>
-                }
+                <button type="button" class="button small" @onclick="() => linkedCapture = true" disabled="@linkedCapture">
+                    <LoreIcon Name="plus" Size="16" /> Create linked note
+                </button>
                 @if (Candidates.Count == 0)
                 {
                     <p class="muted">Create another entry to link it here.</p>
@@ -123,7 +120,7 @@ else
                         {
                             <label class="checkbox link-option" @key="entry.Id">
                                 <input type="checkbox" checked="@draft.Links.Contains(entry.Id)" @onchange="() => ToggleLink(entry.Id)" />
-                                <span>@entry.Title <small>@entry.CategoryLabel</small></span>
+                                <span>@entry.Title <small>@EntryProjectName(entry) · @entry.CategoryLabel</small></span>
                             </label>
                         }
                         @if (!FilteredCandidates.Any())
@@ -182,16 +179,17 @@ else
 </form>
     @if (linkedCapture)
     {
-        <QuickEntry ProjectId="Entry.CatalogId" Scope="Scope" Categories="Categories" Heading="Create linked note" SaveLabel="Create and select link"
+        <QuickEntry ProjectId="@Scope.ProjectFor(Entry)" Scope="Scope" Categories="Categories" Heading="Create linked note" SaveLabel="Create and select link"
                     Saved="LinkCreated" Cancelled="() => linkedCapture = false" />
     }
 }
 
 @code {
     [Parameter, EditorRequired] public LoreEntry Entry { get; set; } = default!;
-    [Parameter, EditorRequired] public IReadOnlySet<Guid> Scope { get; set; } = new HashSet<Guid>();
+    [Parameter, EditorRequired] public NoteScope Scope { get; set; } = default!;
     [Parameter, EditorRequired] public NoteCategory[] Categories { get; set; } = [];
     [Parameter] public string? ProjectName { get; set; }
+    [Parameter, EditorRequired] public Func<LoreEntry, string?> EntryProjectName { get; set; } = default!;
     [Parameter, EditorRequired] public IReadOnlyList<LoreEntry> Candidates { get; set; } = [];
     [Parameter] public IEnumerable<string> KnownTags { get; set; } = [];
     [Parameter] public EventCallback<LoreEntry> Saved { get; set; }
@@ -245,7 +243,8 @@ else
 
     private IEnumerable<LoreEntry> FilteredCandidates => Candidates
         .Where(entry => entry.Title.Contains(linkSearch.Trim(), StringComparison.OrdinalIgnoreCase)
-            || entry.CategoryLabel.Contains(linkSearch.Trim(), StringComparison.OrdinalIgnoreCase))
+            || entry.CategoryLabel.Contains(linkSearch.Trim(), StringComparison.OrdinalIgnoreCase)
+            || EntryProjectName(entry)?.Contains(linkSearch.Trim(), StringComparison.OrdinalIgnoreCase) == true)
         .OrderByDescending(entry => draft.Links.Contains(entry.Id))
         .ThenBy(entry => entry.Title, StringComparer.OrdinalIgnoreCase);
 
@@ -492,7 +491,7 @@ else
         {
             var normalizedTags = tags.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)
                 .Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
-            saved = Store.Save(draft with { Tags = normalizedTags, Summary = draft.Summary.Trim() }, uploads, Scope);
+            saved = Store.Save(draft with { Tags = normalizedTags, Summary = draft.Summary.Trim() }, uploads, Scope, Entry.Links);
         }
         catch (InvalidOperationException ex)
         {

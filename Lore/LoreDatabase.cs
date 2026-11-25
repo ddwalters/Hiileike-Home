@@ -58,7 +58,8 @@ internal sealed class LoreDatabase(string connectionString) : IDisposable
                 command.ExecuteNonQuery();
                 command.CommandText = "SELECT coalesce(max(version), 0) FROM lore.schema_migrations";
                 var version = (int)command.ExecuteScalar()!;
-                string[] scripts = ["001_initial.sql", "002_workspace_entry_types.sql", "003_project_notes.sql"];
+                string[] scripts = ["001_initial.sql", "002_workspace_entry_types.sql", "003_project_notes.sql",
+                    "004_project_category_imports.sql", "005_category_deletion.sql"];
                 if (version > scripts.Length)
                     throw new IOException("The Project Notes schema is newer than this application.");
                 foreach (var scriptName in scripts.Skip(version))
@@ -130,13 +131,14 @@ internal sealed class LoreDatabase(string connectionString) : IDisposable
             using var command = Command("""
                 SELECT EXISTS (SELECT 1 FROM lore.entries WHERE project_id = $1)
                     OR EXISTS (SELECT 1 FROM lore.drafts WHERE project_id = $1)
+                    OR EXISTS (SELECT 1 FROM lore.note_categories WHERE project_id = $1)
                 """, NoteCatalog.LegacyId);
             return (bool)command.ExecuteScalar()!;
         }
 
         public NoteCategory[] LoadCategories(Guid projectId)
         {
-            using var command = Command("SELECT id, name FROM lore.note_categories WHERE project_id = $1", projectId);
+            using var command = Command("SELECT id, name FROM lore.note_categories WHERE project_id = $1 AND NOT deleted", projectId);
             using var reader = command.ExecuteReader();
             var categories = new List<NoteCategory>();
             while (reader.Read())
@@ -146,11 +148,49 @@ internal sealed class LoreDatabase(string connectionString) : IDisposable
 
         public void SaveCategory(Guid projectId, NoteCategory category)
         {
+            UpsertCategory(projectId, category);
+            transaction.Commit();
+        }
+
+        public Dictionary<Guid, Guid?> LoadCategoryReplacements(Guid projectId)
+        {
+            using var command = Command("SELECT id, replacement_id FROM lore.note_categories WHERE project_id = $1 AND deleted", projectId);
+            using var reader = command.ExecuteReader();
+            var replacements = new Dictionary<Guid, Guid?>();
+            while (reader.Read())
+                replacements.Add(reader.GetGuid(0), reader.IsDBNull(1) ? null : reader.GetGuid(1));
+            return replacements;
+        }
+
+        public void DeleteCategory(Guid projectId, Guid id, Guid? replacementId)
+        {
+            Execute("""
+                UPDATE lore.note_categories SET deleted = true, replacement_id = $1
+                WHERE project_id = $2 AND (id = $3 OR (deleted AND replacement_id = $3))
+                """, (object?)replacementId ?? new NpgsqlParameter { NpgsqlDbType = NpgsqlDbType.Uuid, Value = DBNull.Value }, projectId, id);
+            transaction.Commit();
+        }
+
+        public Dictionary<Guid, Guid>? LoadCategoryAliases(Guid projectId)
+        {
+            using var command = Command("SELECT aliases FROM lore.project_category_imports WHERE project_id = $1", projectId);
+            return command.ExecuteScalar() is string json ? JsonSerializer.Deserialize<Dictionary<Guid, Guid>>(json, Json) : null;
+        }
+
+        public void ImportCategories(Guid projectId, IEnumerable<NoteCategory> categories, Dictionary<Guid, Guid> aliases)
+        {
+            foreach (var category in categories)
+                UpsertCategory(projectId, category);
+            Execute("INSERT INTO lore.project_category_imports (project_id, aliases) VALUES ($1, $2)", projectId, JsonValue(aliases));
+            transaction.Commit();
+        }
+
+        private void UpsertCategory(Guid projectId, NoteCategory category)
+        {
             Execute("""
                 INSERT INTO lore.note_categories (project_id, id, name) VALUES ($1, $2, $3)
                 ON CONFLICT (project_id, id) DO UPDATE SET name = excluded.name
                 """, projectId, category.Id, category.Name);
-            transaction.Commit();
         }
 
         public LoreDraft? LoadDraft(Guid projectId, Guid id)
@@ -179,6 +219,16 @@ internal sealed class LoreDatabase(string connectionString) : IDisposable
             return count > 0;
         }
 
+        public void MoveDraft(Guid sourceProject, Guid projectId, Guid id, LoreDraft draft, bool commit = true)
+        {
+            Execute("""
+                UPDATE lore.drafts SET project_id = $1, payload = $2
+                WHERE project_id = $3 AND slot_id = $4
+                """, projectId, JsonValue(draft), sourceProject, id);
+            if (commit)
+                transaction.Commit();
+        }
+
         public void Persist(Dictionary<Guid, LoreRevision[]> next)
         {
             var previous = Load();
@@ -197,7 +247,8 @@ internal sealed class LoreDatabase(string connectionString) : IDisposable
                     ON CONFLICT (id) DO UPDATE SET
                         kind = excluded.kind, status = excluded.status, title = excluded.title,
                         summary = excluded.summary, notes = excluded.notes, implementation = excluded.implementation,
-                        pinned = excluded.pinned, updated_at = excluded.updated_at, revision = excluded.revision
+                        pinned = excluded.pinned, updated_at = excluded.updated_at, revision = excluded.revision,
+                        project_id = excluded.project_id
                     """, entry.Id, (short?)entry.Kind, (short)entry.Status, entry.Title, entry.Summary, entry.Notes,
                     entry.Implementation, entry.Pinned, entry.Updated, entry.Revision, entry.CatalogId);
             }
@@ -240,8 +291,10 @@ internal sealed class LoreDatabase(string connectionString) : IDisposable
                 Execute("DELETE FROM lore.entry_links WHERE entry_a = $1 OR entry_b = $1", entry.Id);
             }
 
-            foreach (var item in changed)
-                foreach (var linkedId in item.Value[^1].Entry.Links)
+            var changedIds = changed.Select(item => item.Key).ToHashSet();
+            foreach (var item in next)
+                foreach (var linkedId in item.Value[^1].Entry.Links.Where(id => next.ContainsKey(id)
+                    && (changedIds.Contains(item.Key) || changedIds.Contains(id))))
                     Execute("""
                         INSERT INTO lore.entry_links (entry_a, entry_b)
                         VALUES (least($1::uuid, $2::uuid), greatest($1::uuid, $2::uuid))

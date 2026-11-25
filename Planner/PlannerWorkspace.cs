@@ -4,18 +4,26 @@ public enum PlannerStatus { Open, InProgress, Done, Archived, Replaced }
 public enum PlannerLane { Backlog, ThisWeek, InProgress, Done }
 public enum ProgressMeasure { Tasks, Milestones, Numeric, Subprojects }
 public enum ReviewAction { Continue, Defer, BreakDown }
+public enum PlannerNoteTargetKind { Task, Project, Milestone }
 
 public sealed record PlannerProject(Guid Id, string Name, string Notes, ProgressMeasure Measure,
     string Unit, int Target, int Value, int Revision, Guid? ParentId = null, bool HiddenFromDashboard = false,
     bool IncludeSubprojectNotes = false, bool IncludesLegacyNotes = false, Guid? NumericMetricId = null,
-    string? LegacyNumericUnit = null);
+    string? LegacyNumericUnit = null, bool Archived = false);
+
+public sealed record ProjectNoteCollection(Guid Id, string Name, bool IncludesLegacyNotes, bool IncludeSubprojectNotes = false)
+{
+    public static ProjectNoteCollection For(PlannerProject project) =>
+        new(project.Id, project.Name, project.IncludesLegacyNotes, project.IncludeSubprojectNotes);
+}
 
 public sealed record PlannerMilestone(Guid Id, Guid ProjectId, string Title, DateOnly? Due, bool Done, int Revision,
     bool HiddenFromDashboard = false);
 
 public sealed record PlannerTask(Guid Id, string Title, string Notes, Guid? ProjectId, Guid? MilestoneId,
     DateOnly? Due, DateOnly? Week, int Priority, PlannerStatus Status, Guid[] LoreIds, int Revision,
-    bool HiddenFromDashboard = false, bool InboxPending = false)
+    bool HiddenFromDashboard = false, bool InboxPending = false, PlannerStatus? StatusBeforeArchive = null,
+    int PriorityBeforeArchive = 0)
 {
     public bool IsOpen => Status is PlannerStatus.Open or PlannerStatus.InProgress;
     public bool IsInbox => InboxPending && Status == PlannerStatus.Open && ProjectId is null && Week is null;
@@ -33,6 +41,7 @@ public sealed record PlannerTask(Guid Id, string Title, string Notes, Guid? Proj
 }
 
 public sealed record TaskCompletion(Guid TaskId, string Title, DateOnly Day);
+public sealed record PlannerNoteLink(Guid NoteId, PlannerNoteTargetKind Kind, Guid TargetId);
 public sealed record ReviewDecision(Guid TaskId, string Title, DateOnly Week, ReviewAction Action,
     DateOnly? Destination, string[] Steps, string Note, int? SourceRevision = null);
 public sealed record ProgressUpdate(Guid ProjectId, DateOnly Day, int Value, Guid? MetricId = null);
@@ -53,6 +62,7 @@ public sealed class PlannerValidationException(string message) : Exception(messa
 public sealed class PlannerWorkspace
 {
     public List<PlannerProject> Projects { get; init; } = [];
+    public List<ProjectNoteCollection> ArchivedNoteCollections { get; init; } = [];
     public List<PlannerMilestone> Milestones { get; init; } = [];
     public List<PlannerTask> Tasks { get; init; } = [];
     public List<TaskCompletion> Completions { get; init; } = [];
@@ -60,10 +70,48 @@ public sealed class PlannerWorkspace
     public List<ProgressUpdate> ProgressUpdates { get; init; } = [];
     public List<ReadingCheckpoint> Checkpoints { get; init; } = [];
     public List<Guid> QueueOrder { get; init; } = [];
+    public List<PlannerNoteLink> NoteLinks { get; init; } = [];
 
     public PlannerProject? Project(Guid? id) => Projects.Find(project => project.Id == id);
     public PlannerMilestone? Milestone(Guid? id) => Milestones.Find(milestone => milestone.Id == id);
     public PlannerTask? Task(Guid id) => Tasks.Find(task => task.Id == id);
+
+    public void SetNoteLink(Guid noteId, PlannerNoteTargetKind kind, Guid targetId, bool linked)
+    {
+        if (kind == PlannerNoteTargetKind.Task)
+        {
+            var task = Task(targetId);
+            if (task is null || (linked && task.Status == PlannerStatus.Replaced))
+                throw new PlannerValidationException("This task is no longer available to link.");
+            if (task.LoreIds.Contains(noteId) != linked)
+                Tasks[Tasks.IndexOf(task)] = task with
+                {
+                    LoreIds = linked ? [..task.LoreIds, noteId] : task.LoreIds.Where(id => id != noteId).ToArray(),
+                    Revision = task.Revision + 1
+                };
+            return;
+        }
+
+        var link = new PlannerNoteLink(noteId, kind, targetId);
+        if (!linked)
+        {
+            NoteLinks.Remove(link);
+            return;
+        }
+        if (kind switch
+            {
+                PlannerNoteTargetKind.Project => Project(targetId) is null,
+                PlannerNoteTargetKind.Milestone => Milestone(targetId) is null,
+                _ => true
+            })
+            throw new PlannerValidationException("This item is no longer available to link.");
+        if (!NoteLinks.Contains(link))
+            NoteLinks.Add(link);
+    }
+
+    public IEnumerable<ProjectNoteCollection> NoteCollections() => Projects.Select(ProjectNoteCollection.For).Concat(ArchivedNoteCollections);
+    public bool HasLegacyNoteCollection() => Projects.Any(project => project.IncludesLegacyNotes)
+        || ArchivedNoteCollections.Any(collection => collection.IncludesLegacyNotes);
 
     public IEnumerable<PlannerTask> OrderedQueue(DateOnly week)
     {
@@ -97,7 +145,7 @@ public sealed class PlannerWorkspace
 
     public void AttachLegacyNotes(DateOnly today)
     {
-        if (Projects.Any(project => project.IncludesLegacyNotes))
+        if (HasLegacyNoteCollection())
             return;
 
         var project = Projects.FirstOrDefault(item => item.ParentId is null
@@ -129,6 +177,7 @@ public sealed class PlannerWorkspace
     }
 
     public bool IsDashboardHidden(Guid? projectId) => Ancestors(projectId).Any(project => project.HiddenFromDashboard);
+    public bool IsProjectArchived(Guid? projectId) => Ancestors(projectId).Any(project => project.Archived);
     public bool IsDashboardHidden(PlannerMilestone milestone) =>
         milestone.HiddenFromDashboard || IsDashboardHidden(milestone.ProjectId);
     public bool IsDashboardHidden(PlannerTask task) => task.HiddenFromDashboard || IsDashboardHidden(task.ProjectId)
@@ -194,6 +243,50 @@ public sealed class PlannerWorkspace
             Projects.Add(project);
     }
 
+    public void DeleteProject(PlannerProject project)
+    {
+        var current = Project(project.Id);
+        if (current is null)
+            return;
+        CheckRevision(current.Revision, project.Revision);
+
+        for (var i = 0; i < Projects.Count; i++)
+        {
+            var child = Projects[i];
+            if (child.ParentId == current.Id)
+                Projects[i] = child with { ParentId = current.ParentId, Revision = child.Revision + 1 };
+        }
+
+        for (var i = 0; i < Tasks.Count; i++)
+        {
+            var task = Tasks[i];
+            if (task.ProjectId == current.Id)
+            {
+                Tasks[i] = task with
+                {
+                    ProjectId = null, MilestoneId = null, InboxPending = false, Revision = task.Revision + 1
+                };
+            }
+        }
+
+        var milestoneIds = Milestones.Where(milestone => milestone.ProjectId == current.Id).Select(milestone => milestone.Id).ToHashSet();
+        Milestones.RemoveAll(milestone => milestoneIds.Contains(milestone.Id));
+        NoteLinks.RemoveAll(link => link.Kind == PlannerNoteTargetKind.Project && link.TargetId == current.Id
+            || link.Kind == PlannerNoteTargetKind.Milestone && milestoneIds.Contains(link.TargetId));
+        ProgressUpdates.RemoveAll(update => update.ProjectId == current.Id);
+        Checkpoints.RemoveAll(checkpoint => checkpoint.ProjectId == current.Id);
+        ArchivedNoteCollections.Add(ProjectNoteCollection.For(current) with { IncludeSubprojectNotes = false });
+        Projects.Remove(current);
+    }
+
+    public void SetProjectArchived(PlannerProject project, bool archived)
+    {
+        var current = Project(project.Id) ?? throw new PlannerValidationException("This project is no longer available.");
+        CheckRevision(current.Revision, project.Revision);
+        if (current.Archived != archived)
+            Projects[Projects.IndexOf(current)] = current with { Archived = archived, Revision = current.Revision + 1 };
+    }
+
     public void SaveMilestone(PlannerMilestone draft)
     {
         var existing = Milestone(draft.Id);
@@ -210,6 +303,24 @@ public sealed class PlannerWorkspace
             Milestones[Milestones.IndexOf(existing)] = milestone;
         else
             Milestones.Add(milestone);
+    }
+
+    public void DeleteMilestone(PlannerMilestone milestone)
+    {
+        var current = Milestone(milestone.Id);
+        if (current is null)
+            return;
+        CheckRevision(current.Revision, milestone.Revision);
+
+        for (var i = 0; i < Tasks.Count; i++)
+        {
+            var task = Tasks[i];
+            if (task.MilestoneId == current.Id)
+                Tasks[i] = task with { MilestoneId = null, Revision = task.Revision + 1 };
+        }
+
+        Milestones.Remove(current);
+        NoteLinks.RemoveAll(link => link.Kind == PlannerNoteTargetKind.Milestone && link.TargetId == current.Id);
     }
 
     public void SaveTask(PlannerTask draft, DateOnly today)
@@ -240,15 +351,46 @@ public sealed class PlannerWorkspace
             Notes = Text(draft.Notes, 8000, "Task notes"),
             LoreIds = draft.LoreIds.Distinct().ToArray(),
             Priority = priority,
-            InboxPending = draft.IsInbox,
+            InboxPending = draft.IsInbox || draft.Status == PlannerStatus.Archived && draft.InboxPending,
+            StatusBeforeArchive = draft.Status == PlannerStatus.Archived
+                ? existing?.Status == PlannerStatus.Archived ? existing.StatusBeforeArchive : existing?.Status
+                : null,
+            PriorityBeforeArchive = draft.Status == PlannerStatus.Archived
+                ? existing?.Status == PlannerStatus.Archived ? existing.PriorityBeforeArchive : existing?.Priority ?? 0
+                : 0,
             Revision = draft.Revision + 1
         };
         if (existing is not null)
             Tasks[Tasks.IndexOf(existing)] = task;
         else
             Tasks.Add(task);
-        if (task.Status == PlannerStatus.Done && existing?.Status != PlannerStatus.Done)
+        if (task.Status == PlannerStatus.Done && existing?.Status != PlannerStatus.Done
+            && existing?.StatusBeforeArchive != PlannerStatus.Done)
             Completions.Add(new(task.Id, task.Title, today));
+    }
+
+    public void SetTaskArchived(PlannerTask task, bool archived, DateOnly today)
+    {
+        if (archived == (task.Status == PlannerStatus.Archived))
+            return;
+        var status = archived ? PlannerStatus.Archived : task.StatusBeforeArchive ?? PlannerStatus.Open;
+        var priority = !archived && task.Week is { } week && task.PriorityBeforeArchive > 0
+            && !Tasks.Any(item => item.IsOpen && item.Id != task.Id && item.Week == week && item.Priority == task.PriorityBeforeArchive)
+            ? task.PriorityBeforeArchive : 0;
+        SaveTask(task with { Status = status, Priority = priority }, today);
+    }
+
+    public void DeleteTask(PlannerTask task)
+    {
+        var current = Task(task.Id);
+        if (current is null)
+            return;
+        CheckRevision(current.Revision, task.Revision);
+
+        Tasks.Remove(current);
+        QueueOrder.RemoveAll(id => id == current.Id);
+        Completions.RemoveAll(completion => completion.TaskId == current.Id);
+        Decisions.RemoveAll(decision => decision.TaskId == current.Id);
     }
 
     public void MoveTask(PlannerTask task, PlannerLane lane, DateOnly today)

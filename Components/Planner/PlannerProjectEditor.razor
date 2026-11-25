@@ -35,14 +35,18 @@
     {
         <p class="planner-muted">Each direct subproject contributes equally to this project's progress.</p>
     }
-    <label class="planner-checkbox"><input type="checkbox" @bind="hidden" /> Hide this project and its subprojects from the dashboard</label>
+    <label class="planner-checkbox"><input type="checkbox" @bind="hidden" /> Hide this project and its subprojects from Queue and Week overview</label>
     @if (Workspace.IsDashboardHidden(parentId))
     {
-        <p class="planner-muted">The parent project is hidden from the dashboard.</p>
+        <p class="planner-muted">The parent project is hidden from Queue and Week overview.</p>
     }
     <div class="planner-actions">
         <button type="submit" class="planner-button primary" disabled="@Busy">Save project</button>
         <button type="button" class="planner-button" @onclick="Cancel">Cancel</button>
+        @if (Item.Revision > 0)
+        {
+            <button type="button" class="planner-button danger" disabled="@Busy" @onclick="() => Delete.InvokeAsync(Item)">Delete project</button>
+        }
     </div>
 </form>
 
@@ -51,6 +55,7 @@
     [Parameter, EditorRequired] public PlannerWorkspace Workspace { get; set; } = default!;
     [Parameter, EditorRequired] public EventCallback<PlannerProject> Submit { get; set; }
     [Parameter, EditorRequired] public EventCallback Cancel { get; set; }
+    [Parameter, EditorRequired] public EventCallback<PlannerProject> Delete { get; set; }
     [Parameter] public bool Busy { get; set; }
 
     private string name = "", notes = "", unit = "";

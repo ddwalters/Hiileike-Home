@@ -25,6 +25,8 @@
     <EmbeddedResource Include="Lore/Database/001_initial.sql" />
     <EmbeddedResource Include="Lore/Database/002_workspace_entry_types.sql" />
     <EmbeddedResource Include="Lore/Database/003_project_notes.sql" />
+    <EmbeddedResource Include="Lore/Database/004_project_category_imports.sql" />
+    <EmbeddedResource Include="Lore/Database/005_category_deletion.sql" />
     <EmbeddedResource Include="Planner/Database/001_initial.sql" />
   </ItemGroup>
 </Project>

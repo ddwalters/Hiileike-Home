@@ -3,7 +3,7 @@
     var end = week.AddDays(6);
     var completions = Workspace.Completions.Where(item => item.Day >= week && item.Day <= end)
         .OrderByDescending(item => item.Day).DistinctBy(item => item.TaskId).ToArray();
-    var pending = Workspace.Tasks.Where(task => task.IsOpen && task.Week == week)
+    var pending = Workspace.Tasks.Where(task => task.IsOpen && task.Week == week && !Workspace.IsProjectArchived(task.ProjectId))
         .OrderBy(task => task.Priority == 0 ? 4 : task.Priority).ThenBy(task => task.Due ?? DateOnly.MaxValue).ToArray();
     var decisions = Workspace.Decisions.Where(item => item.Week == week).ToArray();
     var checkpoints = Workspace.Checkpoints.Where(item => item.Week == week).ToArray();
@@ -157,7 +157,8 @@
     protected override void OnInitialized()
     {
         var current = PlannerCalendar.WeekOf(Today);
-        week = Workspace.Tasks.Where(task => task.IsOpen && task.Week < current).Max(task => task.Week) ?? current;
+        week = Workspace.Tasks.Where(task => task.IsOpen && task.Week < current && !Workspace.IsProjectArchived(task.ProjectId))
+            .Max(task => task.Week) ?? current;
     }
 
     private DateOnly[] AvailableWeeks(DateOnly current) => Workspace.Tasks.Where(task => task.Week <= current)

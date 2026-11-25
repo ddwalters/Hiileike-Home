@@ -8,7 +8,7 @@ public sealed class ProjectNotesWorkspace(PlannerStore planner, LoreStore notes,
     public async Task<PlannerWorkspace> ReadAsync(ClaimsPrincipal user)
     {
         var workspace = await planner.ReadAsync(user);
-        if (workspace.Projects.Any(project => project.IncludesLegacyNotes))
+        if (workspace.HasLegacyNoteCollection())
             return workspace;
 
         bool hasLegacyNotes;
@@ -28,22 +28,25 @@ public sealed class ProjectNotesWorkspace(PlannerStore planner, LoreStore notes,
     public async Task<IReadOnlySet<Guid>> PictureScopeAsync(ClaimsPrincipal user)
     {
         var workspace = await planner.ReadAsync(user);
-        return workspace.Projects.Select(project => project.Id).Append(NoteCatalog.LegacyId).ToHashSet();
+        return workspace.NoteCollections().Select(collection => collection.Id).Append(NoteCatalog.LegacyId).ToHashSet();
     }
 
-    public static IReadOnlySet<Guid> CatalogIds(IEnumerable<PlannerProject> projects)
+    public static IReadOnlySet<Guid> CatalogIds(IEnumerable<ProjectNoteCollection> collections)
     {
         var scope = new HashSet<Guid>();
-        foreach (var project in projects)
+        foreach (var collection in collections)
         {
-            scope.Add(project.Id);
-            if (project.IncludesLegacyNotes)
+            scope.Add(collection.Id);
+            if (collection.IncludesLegacyNotes)
                 scope.Add(NoteCatalog.LegacyId);
         }
         return scope;
     }
 
-    public static PlannerProject? FindProject(PlannerWorkspace workspace, Guid catalogId) => catalogId == NoteCatalog.LegacyId
-        ? workspace.Projects.FirstOrDefault(project => project.IncludesLegacyNotes)
-        : workspace.Project(catalogId);
+    public static NoteScope Access(PlannerWorkspace workspace) => new(
+        CatalogIds(workspace.NoteCollections()), FindCollection(workspace, NoteCatalog.LegacyId)?.Id);
+
+    public static ProjectNoteCollection? FindCollection(PlannerWorkspace workspace, Guid catalogId) => catalogId == NoteCatalog.LegacyId
+        ? workspace.NoteCollections().FirstOrDefault(collection => collection.IncludesLegacyNotes)
+        : workspace.NoteCollections().FirstOrDefault(collection => collection.Id == catalogId);
 }

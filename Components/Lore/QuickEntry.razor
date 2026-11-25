@@ -35,7 +35,7 @@
 
 @code {
     [Parameter, EditorRequired] public Guid ProjectId { get; set; }
-    [Parameter, EditorRequired] public IReadOnlySet<Guid> Scope { get; set; } = new HashSet<Guid>();
+    [Parameter, EditorRequired] public NoteScope Scope { get; set; } = default!;
     [Parameter] public NoteCategory[] Categories { get; set; } = [];
     [Parameter] public Guid? InitialCategory { get; set; }
     [Parameter] public string Heading { get; set; } = "Quick capture";

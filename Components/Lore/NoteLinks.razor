@@ -1,0 +1,122 @@
+@using HiileikeHome.Planner
+
+@{
+    var targets = Targets().ToArray();
+    var linked = targets.Where(target => target.Linked).OrderBy(target => target.Title, StringComparer.OrdinalIgnoreCase).ToArray();
+}
+<section class="panel note-panel">
+    <div class="section-heading">
+        <h2><LoreIcon Name="link" /> Linked items <small>@linked.Length</small></h2>
+        <button type="button" class="button small" aria-expanded="@pickerOpen" @onclick="TogglePicker">
+            @(pickerOpen ? "Close picker" : "Add link")
+        </button>
+    </div>
+    @if (pickerOpen)
+    {
+        <div class="edit-section note-link-picker">
+            <label>Search items
+                <input type="search" @bind="search" @bind:event="oninput" placeholder="Search by name, project, or category" />
+            </label>
+            <label>Item type
+                <select @bind="typeFilter">
+                    <option value="">All types</option>
+                    <option value="Note">Notes</option>
+                    <option value="Task">Tasks</option>
+                    <option value="Project">Projects</option>
+                    <option value="Milestone">Milestones</option>
+                </select>
+            </label>
+            @{
+                var matches = targets.Where(target => !target.Linked && Matches(target))
+                    .OrderBy(target => target.Title, StringComparer.OrdinalIgnoreCase).Take(16).ToArray();
+            }
+            @if (matches.Length == 0)
+            {
+                <p class="muted">No matching items to link.</p>
+            }
+            @foreach (var target in matches)
+            {
+                <div class="note-link-row" @key="(target.Kind, target.Id)">
+                    <span><strong>@target.Title</strong><small class="muted">@target.Context</small></span>
+                    <button type="button" class="button small" disabled="@Busy" aria-label="@($"Link {target.Title}")"
+                            @onclick="() => Changed.InvokeAsync(new LinkChange(target.Id, target.Kind, true))">Link</button>
+                </div>
+            }
+        </div>
+    }
+    @if (linked.Length == 0 && !pickerOpen)
+    {
+        <p class="muted">No linked items yet.</p>
+    }
+    @foreach (var target in linked)
+    {
+        <div class="note-link-row" @key="(target.Kind, target.Id)">
+            <a class="related" href="@target.Href">
+                <span><strong>@target.Title</strong><small>@target.Context</small></span>
+                <LoreIcon Name="arrow" Size="15" />
+            </a>
+            @if (pickerOpen)
+            {
+                <button type="button" class="button small" disabled="@Busy" aria-label="@($"Unlink {target.Title}")"
+                        @onclick="() => Changed.InvokeAsync(new LinkChange(target.Id, target.Kind, false))">Unlink</button>
+            }
+        </div>
+    }
+</section>
+
+@code {
+    [Parameter, EditorRequired] public LoreEntry Entry { get; set; } = default!;
+    [Parameter, EditorRequired] public IReadOnlyList<LoreEntry> Entries { get; set; } = [];
+    [Parameter, EditorRequired] public PlannerWorkspace Workspace { get; set; } = default!;
+    [Parameter, EditorRequired] public NoteScope Scope { get; set; } = default!;
+    [Parameter, EditorRequired] public EventCallback<LinkChange> Changed { get; set; }
+    [Parameter] public bool Busy { get; set; }
+
+    public sealed record LinkChange(Guid Id, PlannerNoteTargetKind? Kind, bool Linked);
+
+    private sealed record Target(Guid Id, PlannerNoteTargetKind? Kind, string Title, string Context, string Href, bool Linked)
+    {
+        public string Type => Kind?.ToString() ?? "Note";
+    }
+
+    private bool pickerOpen;
+    private string search = "", typeFilter = "";
+
+    private void TogglePicker() => pickerOpen = !pickerOpen;
+
+    private bool Matches(Target target) => (typeFilter.Length == 0 || target.Type == typeFilter)
+        && (target.Title.Contains(search.Trim(), StringComparison.OrdinalIgnoreCase)
+            || target.Context.Contains(search.Trim(), StringComparison.OrdinalIgnoreCase));
+
+    private IEnumerable<Target> Targets()
+    {
+        var plannerLinks = Workspace.NoteLinks.Where(link => link.NoteId == Entry.Id)
+            .Select(link => (link.Kind, link.TargetId)).ToHashSet();
+        var noteLinks = Entry.Links.ToHashSet();
+        foreach (var note in Entries.Where(note => note.Id != Entry.Id))
+        {
+            var project = ProjectNotesWorkspace.FindCollection(Workspace, Scope.ProjectFor(note));
+            yield return new(note.Id, null, note.Title, $"Note · {project?.Name} · {note.CategoryLabel}",
+                $"/project-notes/entry/{note.Id}", noteLinks.Contains(note.Id));
+        }
+        foreach (var task in Workspace.Tasks.Where(task => task.Status != PlannerStatus.Replaced || task.LoreIds.Contains(Entry.Id)))
+        {
+            var projectName = Workspace.Project(task.ProjectId)?.Name ?? "No project";
+            yield return new(task.Id, PlannerNoteTargetKind.Task, task.Title, $"Task · {projectName} · {task.Status.Label()}",
+                $"/planner/tasks/{task.Id}", task.LoreIds.Contains(Entry.Id));
+        }
+        foreach (var project in Workspace.Projects)
+        {
+            var context = Workspace.IsProjectArchived(project.Id) ? "Project · Archived" : "Project";
+            yield return new(project.Id, PlannerNoteTargetKind.Project, project.Name, context,
+                $"/planner/projects/{project.Id}", plannerLinks.Contains((PlannerNoteTargetKind.Project, project.Id)));
+        }
+        foreach (var milestone in Workspace.Milestones)
+        {
+            var projectName = Workspace.Project(milestone.ProjectId)?.Name;
+            yield return new(milestone.Id, PlannerNoteTargetKind.Milestone, milestone.Title, $"Milestone · {projectName}",
+                $"/planner/projects/{milestone.ProjectId}#milestone-{milestone.Id}",
+                plannerLinks.Contains((PlannerNoteTargetKind.Milestone, milestone.Id)));
+        }
+    }
+}

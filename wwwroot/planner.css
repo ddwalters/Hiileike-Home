@@ -127,6 +127,8 @@
     .planner-button:hover { background: var(--planner-raised); color: var(--planner-text); border-color: var(--planner-accent); }
     .planner-button.primary { color: #23181c; background: var(--planner-accent); border-color: var(--planner-accent); }
     .planner-button.primary:hover { color: #201417; background: #ffb0b7; }
+    .planner-button.danger { color: #ffb1b8; border-color: #714151; }
+    .planner-button.danger:hover { color: #ffd2d6; background: #38242c; border-color: #ffb1b8; }
     .planner-button.small { min-height: 32px; padding: 4px 9px; font-size: .78rem; }
     .planner-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 9px; }
 
@@ -289,6 +291,16 @@
     .queue-grip + .queue-item-link { padding-left: 2px; }
     .queue-item-link:focus-visible { outline-offset: -2px; }
     .queue-item-link > svg { color: var(--planner-muted); }
+    .queue-row-actions { position: relative; align-self: center; margin-right: 7px; }
+    .queue-more { width: 42px; min-height: 42px; padding: 0; }
+    .queue-row-menu {
+        position: absolute; z-index: 3; top: calc(100% + 4px); right: 0;
+        display: grid; gap: 5px; min-width: max-content; padding: 7px;
+        background: var(--planner-panel); border: 1px solid var(--planner-line); border-radius: 8px;
+        box-shadow: 0 4px 14px #0007;
+    }
+    .queue-row-menu .planner-button { justify-content: flex-start; min-height: 40px; }
+    .planner-milestone:target { outline: 1px solid var(--planner-accent); outline-offset: 5px; }
     .queue-item-copy { display: grid; justify-items: start; overflow-wrap: anywhere; }
     .queue-item-copy strong { color: var(--planner-text); }
     .queue-item-project, .queue-item-facts { color: var(--planner-muted); font-size: .76rem; }

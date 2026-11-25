@@ -1,4 +1,8 @@
 @inject NavigationManager Navigation
+@inject IJSRuntime JS
+@inject LoreStore Lore
+@inject ILogger<PlannerProjects> Logger
+@using HiileikeHome.Lore
 
 @if (projectDraft is { } editing)
 {
@@ -6,10 +10,12 @@
         <div><h1>@(editing.Revision == 0 ? (editing.ParentId is null ? "New project" : "New subproject") : "Project settings")</h1></div>
     </div>
     <PlannerProjectEditor @key="editing.Id" Item="editing" Workspace="Workspace" Busy="Busy"
-                          Submit="SaveProject" Cancel="CancelProject" />
+                          Submit="SaveProject" Cancel="CancelProject" Delete="DeleteProject" />
 }
 else if (ProjectId is null)
 {
+    var tree = Workspace.ProjectTree().ToArray();
+    var archived = tree.Where(item => Workspace.IsProjectArchived(item.Project.Id)).ToArray();
     <div class="planner-heading">
         <div><h1>Projects</h1></div>
         <button class="planner-button primary" type="button" @onclick="() => NewProject(null)">
@@ -17,26 +23,25 @@ else if (ProjectId is null)
         </button>
     </div>
     <section class="planner-panel planner-project-list">
-        @if (Workspace.Projects.Count == 0)
+        @if (tree.Length == archived.Length)
         {
-            <p class="planner-empty">Create your first project to start a roadmap.</p>
+            <p class="planner-empty">@(archived.Length > 0 ? "No active projects." : "Create your first project to start a roadmap.")</p>
         }
-        @foreach (var (project, depth) in Workspace.ProjectTree())
+        @foreach (var (project, depth) in tree.Where(item => !Workspace.IsProjectArchived(item.Project.Id)))
         {
-            <a class="planner-project-meter planner-project-list-item" href="@ProjectUrl(project.Id)"
-               style="@($"--project-depth: {Math.Min(depth, 5)}")">
-                <span>
-                    <strong>@project.Name</strong>
-                    @if (Workspace.IsDashboardHidden(project.Id))
-                    {
-                        <small class="planner-muted">Hidden on dashboard</small>
-                    }
-                    <LoreIcon Name="arrow" Size="15" />
-                </span>
-                <PlannerProgress Progress="@Workspace.Progress(project)" Label="@project.Name" />
-            </a>
+            @ProjectRow(project, depth)
         }
     </section>
+    @if (archived.Length > 0)
+    {
+        <details class="planner-panel planner-roadmap">
+            <summary>Archived projects (@archived.Length)</summary>
+            @foreach (var (project, depth) in archived)
+            {
+                @ProjectRow(project, depth)
+            }
+        </details>
+    }
 }
 else if (Workspace.Project(ProjectId) is not { } project)
 {
@@ -64,6 +69,10 @@ else
                 }
             </nav>
             <h1>@project.Name</h1>
+            @if (Workspace.IsProjectArchived(project.Id))
+            {
+                <p class="planner-muted">@(project.Archived ? "Archived project" : "Archived with its parent project")</p>
+            }
         </div>
         <div class="planner-actions">
             <a href="@($"/planner?project={project.Id}")" class="planner-button">Open queue</a>
@@ -71,11 +80,19 @@ else
                 <LoreIcon Name="book" Size="17" /> Project Notes
             </a>
             <button type="button" class="planner-button" @onclick="() => projectDraft = project">Project settings</button>
+            @if (project.Archived || !Workspace.IsProjectArchived(project.ParentId))
+            {
+                <button type="button" class="planner-button" disabled="@Busy" @onclick="() => ToggleProjectArchive(project)">
+                    @(project.Archived ? "Restore project" : "Archive project")
+                </button>
+            }
             <a href="@($"/planner/new-task?project={project.Id}")" class="planner-button primary">
                 <LoreIcon Name="plus" Size="17" /> New task
             </a>
         </div>
     </div>
+
+    @RelatedNotes(PlannerNoteTargetKind.Project, project.Id)
 
     <div class="planner-dashboard-grid">
         <section class="planner-panel">
@@ -83,7 +100,7 @@ else
                 <h2>Progress</h2>
                 @if (Workspace.IsDashboardHidden(project.Id))
                 {
-                    <small class="planner-muted">Hidden on dashboard</small>
+                    <small class="planner-muted">Hidden from Queue and Week overview</small>
                 }
             </div>
             <PlannerProgress Progress="progress" Label="@project.Name" />
@@ -146,7 +163,7 @@ else
                   @onsubmit="() => SaveMilestone(edit)" @onsubmit:preventDefault>
                 <label>Milestone title <input required maxlength="140" @bind="milestoneTitle" /></label>
                 <label>Target date <input type="date" @bind="milestoneDue" /></label>
-                <label class="planner-checkbox"><input type="checkbox" @bind="milestoneHidden" /> Hide this milestone from the dashboard</label>
+                <label class="planner-checkbox"><input type="checkbox" @bind="milestoneHidden" /> Hide this milestone from Week overview</label>
                 <div class="planner-actions">
                     <button type="submit" class="planner-button primary" disabled="@Busy">Save milestone</button>
                     <button type="button" class="planner-button" @onclick="() => milestoneDraft = null">Cancel</button>
@@ -159,7 +176,7 @@ else
         }
         @foreach (var milestone in milestones)
         {
-            <article class="planner-milestone" @key="milestone.Id">
+            <article class="planner-milestone" id="@($"milestone-{milestone.Id}")" @key="milestone.Id">
                 <div class="planner-section-heading">
                     <div>
                         <h3>@milestone.Title</h3>
@@ -171,7 +188,7 @@ else
                             }
                             @if (Workspace.IsDashboardHidden(milestone))
                             {
-                                <span> · Hidden on dashboard</span>
+                                <span> · Hidden from Week overview</span>
                             }
                         </p>
                     </div>
@@ -182,8 +199,11 @@ else
                         <button type="button" class="planner-button small" disabled="@Busy" @onclick="() => ToggleMilestone(milestone)">
                             @(milestone.Done ? "Reopen milestone" : "Complete milestone")
                         </button>
+                        <button type="button" class="planner-button small danger" aria-label="@($"Delete milestone {milestone.Title}")"
+                                disabled="@Busy" @onclick="() => DeleteMilestone(milestone)">Delete</button>
                     </div>
                 </div>
+                @RelatedNotes(PlannerNoteTargetKind.Milestone, milestone.Id)
                 @foreach (var task in tasks.Where(task => task.MilestoneId == milestone.Id).OrderBy(task => task.Due ?? DateOnly.MaxValue))
                 {
                     <PlannerTaskRow @key="task.Id" Item="task" Workspace="Workspace" QueueProjectId="project.Id" />
@@ -219,14 +239,68 @@ else
     private DateOnly? milestoneDue;
     private bool milestoneHidden, checkpointEdited;
     private int? progressValue, checkpointValue;
+    private LoreEntry[] linkedNotes = [];
 
     private static string ProjectUrl(Guid id) => $"/planner/projects/{id}";
+
+    private RenderFragment ProjectRow(PlannerProject project, int depth) => @<a class="planner-project-meter planner-project-list-item"
+        href="@ProjectUrl(project.Id)" style="@($"--project-depth: {Math.Min(depth, 5)}")">
+        <span>
+            <strong>@project.Name</strong>
+            @if (Workspace.IsDashboardHidden(project.Id))
+            {
+                <small class="planner-muted">Hidden from Queue and Week overview</small>
+            }
+            <LoreIcon Name="arrow" Size="15" />
+        </span>
+        <PlannerProgress Progress="@Workspace.Progress(project)" Label="@project.Name" />
+    </a>;
 
     protected override void OnInitialized()
     {
         if (Creating)
             NewProject(null);
     }
+
+    protected override void OnParametersSet()
+    {
+        linkedNotes = [];
+        if (ProjectId is not { } id)
+            return;
+        var milestoneIds = Workspace.Milestones.Where(item => item.ProjectId == id).Select(item => item.Id).ToHashSet();
+        var noteIds = Workspace.NoteLinks.Where(link => link.Kind == PlannerNoteTargetKind.Project && link.TargetId == id
+                || link.Kind == PlannerNoteTargetKind.Milestone && milestoneIds.Contains(link.TargetId))
+            .Select(link => link.NoteId).ToHashSet();
+        if (noteIds.Count == 0)
+            return;
+        try
+        {
+            linkedNotes = Lore.Snapshot(null, ProjectNotesWorkspace.Access(Workspace)).Entries
+                .Where(note => noteIds.Contains(note.Id)).OrderBy(note => note.Title, StringComparer.OrdinalIgnoreCase).ToArray();
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or System.Text.Json.JsonException)
+        {
+            Logger.LogWarning(exception, "Linked notes unavailable for Planner project {ProjectId}.", id);
+        }
+    }
+
+    private RenderFragment RelatedNotes(PlannerNoteTargetKind kind, Guid id) => @<text>
+        @{
+            var noteIds = Workspace.NoteLinks.Where(link => link.Kind == kind && link.TargetId == id)
+                .Select(link => link.NoteId).ToHashSet();
+            var notes = linkedNotes.Where(note => noteIds.Contains(note.Id)).ToArray();
+        }
+        @if (notes.Length > 0)
+        {
+            <section class="planner-panel planner-roadmap">
+                <div class="planner-section-heading"><h2>Linked notes</h2></div>
+                @foreach (var note in notes)
+                {
+                    <a class="planner-task-row" href="@($"/project-notes/entry/{note.Id}")">@note.Title</a>
+                }
+            </section>
+        }
+    </text>;
 
     private void NewProject(Guid? parent) =>
         projectDraft = new(Guid.NewGuid(), "", "", ProgressMeasure.Tasks, "", 0, 0, 0, parent);
@@ -249,6 +323,21 @@ else
             Navigation.NavigateTo(ProjectUrl(project.Id), replace: Creating);
     }
 
+    private Task ToggleProjectArchive(PlannerProject project) =>
+        Save(state => state.SetProjectArchived(project, !project.Archived),
+            project.Archived ? "Project restored." : "Project archived. Its roadmap, tasks, and notes are still available.");
+
+    private async Task DeleteProject(PlannerProject project)
+    {
+        if (Busy || !await JS.InvokeAsync<bool>("confirm", $"Permanently delete the project “{project.Name}” and its milestones and progress history? Its tasks will have no project. Its subprojects and Project Notes will be kept."))
+            return;
+
+        if (await Save(state => state.DeleteProject(project), "Project deleted.") is not { } saved)
+            return;
+        projectDraft = null;
+        Navigation.NavigateTo(saved.Project(project.ParentId) is { } parent ? ProjectUrl(parent.Id) : "/planner/projects", replace: true);
+    }
+
     private void NewMilestone(Guid id) => EditMilestone(new(Guid.NewGuid(), id, "", null, false, 0));
 
     private void EditMilestone(PlannerMilestone milestone)
@@ -267,6 +356,16 @@ else
     private Task ToggleMilestone(PlannerMilestone milestone) =>
         Save(state => state.SaveMilestone(milestone with { Done = !milestone.Done }),
             milestone.Done ? "Milestone reopened." : "Milestone completed.");
+
+    private async Task DeleteMilestone(PlannerMilestone milestone)
+    {
+        if (Busy || !await JS.InvokeAsync<bool>("confirm", $"Permanently delete the milestone “{milestone.Title}”? Its tasks will stay in this project without a milestone."))
+            return;
+
+        if (await Save(state => state.DeleteMilestone(milestone), "Milestone deleted.") is not null
+            && milestoneDraft?.Id == milestone.Id)
+            milestoneDraft = null;
+    }
 
     private void ReadProgress(ChangeEventArgs args) =>
         progressValue = int.TryParse(args.Value?.ToString(), out var value) ? value : null;
